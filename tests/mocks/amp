@@ -46,6 +46,46 @@ case "$BEHAVIOR" in
     echo "Ralph iteration: fatal error!" >&2
     exit 1
     ;;
+  mutate)
+    # Mutate an immutable field (change a story title)
+    echo "Ralph iteration: implementing story..."
+    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+      NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+      if [ -n "$NEXT_ID" ]; then
+        jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).title = "MUTATED TITLE" | (.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+        echo "Marked $NEXT_ID as passed (and mutated title)."
+      fi
+    fi
+    ;;
+  multi-pass)
+    # Mark multiple stories as passed in one iteration
+    echo "Ralph iteration: implementing ALL stories..."
+    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+      jq '(.userStories[] | select(.passes != true)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+      mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+      echo "Marked all stories as passed."
+    fi
+    ;;
+  revert)
+    # Revert a previously passed story back to false
+    echo "Ralph iteration: reverting story..."
+    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+      FIRST_PASSED=$(jq -r '[.userStories[] | select(.passes == true)] | .[0].id // empty' "$MOCK_PRD_FILE")
+      if [ -n "$FIRST_PASSED" ]; then
+        jq --arg id "$FIRST_PASSED" '(.userStories[] | select(.id == $id)).passes = false' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+        echo "Reverted $FIRST_PASSED."
+      fi
+    fi
+    ;;
+  corrupt)
+    # Write invalid JSON to prd.json
+    echo "Ralph iteration: corrupting prd.json..."
+    if [ -n "$MOCK_PRD_FILE" ]; then
+      echo "not valid json {{{" > "$MOCK_PRD_FILE"
+    fi
+    ;;
   *)
     echo "Unknown mock behavior: $BEHAVIOR"
     exit 1

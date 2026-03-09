@@ -1,0 +1,34 @@
+{
+  "project": "TestProject",
+  "branchName": "ralph/test-branch",
+  "description": "Three incomplete stories",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "First story",
+      "description": "Not done",
+      "acceptanceCriteria": ["Something passes"],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Second story",
+      "description": "Not done",
+      "acceptanceCriteria": ["Something else"],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Third story",
+      "description": "Not done",
+      "acceptanceCriteria": ["Another thing"],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
