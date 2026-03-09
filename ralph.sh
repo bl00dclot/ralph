@@ -174,6 +174,124 @@ notify() {
   fi
 }
 
+# --- Diff guard: validate AI did not violate the contract ---
+check_contract() {
+  local snapshot="$RALPH_STATE_DIR/snapshot.json"
+  local current="$PRD_FILE"
+
+  # Check prd.json is still valid JSON
+  if ! jq empty "$current" 2>/dev/null; then
+    echo ""
+    echo "Contract violation: prd.json is no longer valid JSON"
+    cp "$snapshot" "$current"
+    echo "Restored prd.json from snapshot."
+    return 1
+  fi
+
+  # Check immutable top-level fields unchanged
+  local IMMUTABLE_DIFF
+  IMMUTABLE_DIFF=$(jq -n \
+    --slurpfile snap "$snapshot" \
+    --slurpfile curr "$current" \
+    '
+    ($snap[0] | {project, branchName, description}) != ($curr[0] | {project, branchName, description})
+    ')
+
+  if [ "$IMMUTABLE_DIFF" = "true" ]; then
+    echo ""
+    echo "Contract violation: AI mutated immutable top-level fields"
+    jq -n --slurpfile snap "$snapshot" --slurpfile curr "$current" \
+      '{snapshot: ($snap[0] | {project, branchName, description}), current: ($curr[0] | {project, branchName, description})}'
+    cp "$snapshot" "$current"
+    echo "Restored prd.json from snapshot."
+    return 1
+  fi
+
+  # Check story immutable fields (id, title, description, acceptanceCriteria, priority)
+  local STORY_DIFF
+  STORY_DIFF=$(jq -n \
+    --slurpfile snap "$snapshot" \
+    --slurpfile curr "$current" \
+    '
+    [range($snap[0].userStories | length)] |
+    map(
+      select(
+        ($snap[0].userStories[.] | {id, title, description, acceptanceCriteria, priority}) !=
+        ($curr[0].userStories[.] | {id, title, description, acceptanceCriteria, priority})
+      ) | $snap[0].userStories[.].id
+    ) | if length > 0 then join(", ") else empty end
+    ')
+
+  if [ -n "$STORY_DIFF" ]; then
+    echo ""
+    echo "Contract violation: AI mutated immutable fields in stories: $STORY_DIFF"
+    cp "$snapshot" "$current"
+    echo "Restored prd.json from snapshot."
+    return 1
+  fi
+
+  # Check no story reverted (true → false)
+  local REVERTED
+  REVERTED=$(jq -n \
+    --slurpfile snap "$snapshot" \
+    --slurpfile curr "$current" \
+    '
+    [range($snap[0].userStories | length)] |
+    map(
+      select(
+        $snap[0].userStories[.].passes == true and
+        $curr[0].userStories[.].passes != true
+      ) | $snap[0].userStories[.].id
+    ) | if length > 0 then join(", ") else empty end
+    ')
+
+  if [ -n "$REVERTED" ]; then
+    echo ""
+    echo "Contract violation: AI reverted completed stories: $REVERTED"
+    cp "$snapshot" "$current"
+    echo "Restored prd.json from snapshot."
+    return 1
+  fi
+
+  # Check at most 1 story flipped false → true
+  local PASS_COUNT
+  PASS_COUNT=$(jq -n \
+    --slurpfile snap "$snapshot" \
+    --slurpfile curr "$current" \
+    '
+    [range($snap[0].userStories | length)] |
+    map(
+      select(
+        $snap[0].userStories[.].passes != true and
+        $curr[0].userStories[.].passes == true
+      )
+    ) | length
+    ')
+
+  if [ "$PASS_COUNT" -gt 1 ]; then
+    local NEWLY_PASSED
+    NEWLY_PASSED=$(jq -n \
+      --slurpfile snap "$snapshot" \
+      --slurpfile curr "$current" \
+      '
+      [range($snap[0].userStories | length)] |
+      map(
+        select(
+          $snap[0].userStories[.].passes != true and
+          $curr[0].userStories[.].passes == true
+        ) | $curr[0].userStories[.].id
+      ) | join(", ")
+      ')
+    echo ""
+    echo "Contract violation: AI completed multiple stories in one iteration: $NEWLY_PASSED"
+    cp "$snapshot" "$current"
+    echo "Restored prd.json from snapshot."
+    return 1
+  fi
+
+  return 0
+}
+
 # --- Dry run mode ---
 if [ "$DRY_RUN" = true ]; then
   echo "Dry run — current status:"
@@ -249,6 +367,9 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo "  Ralph Iteration $i of $MAX_ITERATIONS ($TOOL)"
   echo "==============================================================="
 
+  # --- Snapshot prd.json before iteration ---
+  cp "$PRD_FILE" "$RALPH_STATE_DIR/snapshot.json"
+
   ITER_LOG="$LOG_DIR/iteration-$i.log"
 
   # Run the AI tool, streaming output live to terminal AND to log file.
@@ -273,7 +394,13 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   fi
 
   echo "  (log saved to $ITER_LOG)"
-  
+
+  # --- Contract guard ---
+  if ! check_contract; then
+    notify "Ralph CONTRACT VIOLATION" "AI broke the contract. Check logs."
+    exit 3
+  fi
+
   # --- Stuck detection ---
   NEXT_INCOMPLETE=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$PRD_FILE")
   if [ -n "$NEXT_INCOMPLETE" ]; then
