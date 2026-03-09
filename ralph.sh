@@ -327,6 +327,8 @@ if [ -f "$PRD_FILE" ] && [ -f "$LAST_BRANCH_FILE" ]; then
     mkdir -p "$ARCHIVE_FOLDER"
     [ -f "$PRD_FILE" ] && cp "$PRD_FILE" "$ARCHIVE_FOLDER/"
     [ -f "$PROGRESS_FILE" ] && cp "$PROGRESS_FILE" "$ARCHIVE_FOLDER/"
+    [ -f "$PROMPT_FILE" ] && cp "$PROMPT_FILE" "$ARCHIVE_FOLDER/"
+    [ -d "$LOG_DIR" ] && cp -r "$LOG_DIR" "$ARCHIVE_FOLDER/"
     echo "   Archived to: $ARCHIVE_FOLDER"
     
     # Reset progress file for new run

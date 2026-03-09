@@ -43,6 +43,24 @@ load test_helper
   [ "$BRANCH" = "ralph/test-branch" ]
 }
 
+@test "archives logs and CLAUDE.md when branch changes" {
+  use_fixture "valid-prd.json"
+
+  echo "ralph/old-branch" > "$RALPH_DIR/.last-branch"
+  echo "# Old progress" > "$RALPH_DIR/progress.txt"
+  mkdir -p "$RALPH_DIR/logs"
+  echo "iteration 1 log" > "$RALPH_DIR/logs/iteration-1.log"
+
+  export MOCK_CLAUDE_BEHAVIOR="fail"
+  run "$RALPH_DIR/ralph.sh" --tool claude 1
+
+  # Check logs were archived
+  ARCHIVE_FOLDER=$(find "$RALPH_DIR/archive" -mindepth 1 -maxdepth 1 -type d | head -1)
+  [ -d "$ARCHIVE_FOLDER/logs" ]
+  [ -f "$ARCHIVE_FOLDER/logs/iteration-1.log" ]
+  [ -f "$ARCHIVE_FOLDER/CLAUDE.md" ]
+}
+
 @test "resets progress.txt after archiving" {
   use_fixture "valid-prd.json"
 
