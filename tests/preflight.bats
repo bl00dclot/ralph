@@ -48,3 +48,17 @@ load test_helper
   [ "$status" -eq 0 ]
   [[ "$output" == *"Warning: Working tree has uncommitted changes"* ]]
 }
+
+@test "fails when story is missing required fields" {
+  use_fixture "bad-schema-prd.json"
+  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"schema invalid"* ]]
+}
+
+@test "fails when story fields have wrong types" {
+  use_fixture "bad-types-prd.json"
+  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"schema invalid"* ]]
+}

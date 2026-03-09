@@ -1,0 +1,16 @@
+{
+  "project": "TestProject",
+  "branchName": "ralph/test",
+  "description": "Wrong types",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Wrong types",
+      "description": "Test",
+      "acceptanceCriteria": "should be array not string",
+      "priority": "high",
+      "passes": "yes",
+      "notes": ""
+    }
+  ]
+}

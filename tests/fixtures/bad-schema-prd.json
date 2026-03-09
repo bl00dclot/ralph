@@ -1,0 +1,11 @@
+{
+  "project": "TestProject",
+  "branchName": "ralph/test",
+  "description": "Missing fields in stories",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Has no acceptanceCriteria or priority"
+    }
+  ]
+}
