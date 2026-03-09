@@ -1,0 +1,16 @@
+{
+  "name": "ralph",
+  "version": "1.0.0",
+  "description": "Ralph Wiggum — autonomous AI agent loop runner",
+  "scripts": {
+    "test": "bats tests/",
+    "test:verbose": "bats --verbose-run tests/"
+  },
+  "keywords": ["ai", "agent", "automation"],
+  "license": "MIT",
+  "devDependencies": {
+    "bats": "^1.13.0",
+    "bats-assert": "^2.2.4",
+    "bats-support": "^0.3.0"
+  }
+}

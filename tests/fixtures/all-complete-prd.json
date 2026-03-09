@@ -1,0 +1,25 @@
+{
+  "project": "TestProject",
+  "branchName": "ralph/all-done",
+  "description": "All stories complete",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "First story",
+      "description": "Done",
+      "acceptanceCriteria": ["Passes"],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Second story",
+      "description": "Done",
+      "acceptanceCriteria": ["Passes"],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

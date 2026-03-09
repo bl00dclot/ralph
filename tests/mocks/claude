@@ -1,0 +1,53 @@
+#!/bin/bash
+# Mock claude CLI — reads stdin, prints a fake response, optionally marks a story as passed
+# Behavior controlled by MOCK_CLAUDE_BEHAVIOR env var:
+#   "pass"    — mark the next incomplete story as passed in prd.json and output completion
+#   "fail"    — output something but don't mark anything
+#   "promise" — output <promise>COMPLETE</promise> without updating prd.json
+#   "hang"    — sleep forever (for timeout testing)
+#   "crash"   — exit 1
+
+# Consume stdin
+cat > /dev/null
+
+BEHAVIOR="${MOCK_CLAUDE_BEHAVIOR:-fail}"
+
+case "$BEHAVIOR" in
+  pass)
+    echo "Ralph iteration: implementing next story..."
+    # Find and mark the next incomplete story
+    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+      NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+      if [ -n "$NEXT_ID" ]; then
+        jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+        echo "Marked $NEXT_ID as passed."
+      fi
+      # Check if all done
+      REMAINING=$(jq '[.userStories[] | select(.passes != true)] | length' "$MOCK_PRD_FILE")
+      if [ "$REMAINING" -eq 0 ]; then
+        echo "<promise>COMPLETE</promise>"
+      fi
+    fi
+    ;;
+  fail)
+    echo "Ralph iteration: attempted story but failed."
+    echo "Something went wrong, will try again."
+    ;;
+  promise)
+    echo "Ralph iteration: signaling completion."
+    echo "<promise>COMPLETE</promise>"
+    ;;
+  hang)
+    echo "Ralph iteration: starting long task..."
+    sleep 3600
+    ;;
+  crash)
+    echo "Ralph iteration: fatal error!" >&2
+    exit 1
+    ;;
+  *)
+    echo "Unknown mock behavior: $BEHAVIOR"
+    exit 1
+    ;;
+esac
