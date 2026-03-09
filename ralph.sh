@@ -133,6 +133,33 @@ if ! git diff --quiet 2>/dev/null; then
   echo "Warning: Working tree has uncommitted changes."
 fi
 
+# --- Lockfile ---
+RALPH_STATE_DIR="$SCRIPT_DIR/.ralph"
+LOCKFILE="$RALPH_STATE_DIR/ralph.lock"
+
+cleanup() {
+  rm -f "$LOCKFILE"
+}
+trap cleanup EXIT
+
+mkdir -p "$RALPH_STATE_DIR"
+
+if [ -f "$LOCKFILE" ]; then
+  LOCK_PID=$(grep '^pid=' "$LOCKFILE" | cut -d= -f2)
+  if [ -n "$LOCK_PID" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    echo "Error: Another Ralph instance is running (PID $LOCK_PID)"
+    # Don't clean up someone else's lock on exit
+    trap - EXIT
+    exit 1
+  else
+    echo "Warning: Removing stale lockfile (PID $LOCK_PID not running)"
+    rm -f "$LOCKFILE"
+  fi
+fi
+
+echo "pid=$$" > "$LOCKFILE"
+echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOCKFILE"
+
 # Notification helper
 notify() {
   local title="$1" body="$2"
