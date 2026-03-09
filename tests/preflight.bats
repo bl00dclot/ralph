@@ -62,3 +62,11 @@ load test_helper
   [ "$status" -eq 1 ]
   [[ "$output" == *"schema invalid"* ]]
 }
+
+@test "fails when CLAUDE.md is missing" {
+  use_fixture "valid-prd.json"
+  rm -f "$RALPH_DIR/CLAUDE.md"
+  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CLAUDE.md not found"* ]]
+}

@@ -72,6 +72,7 @@ PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 ARCHIVE_DIR="$SCRIPT_DIR/archive"
 LAST_BRANCH_FILE="$SCRIPT_DIR/.last-branch"
 LOG_DIR="$SCRIPT_DIR/logs"
+PROMPT_FILE="$SCRIPT_DIR/CLAUDE.md"
 
 # --- Preflight checks ---
 if [ ! -f "$PRD_FILE" ]; then
@@ -118,6 +119,12 @@ SCHEMA_ERRORS=$(jq -r '
 if [ -n "$SCHEMA_ERRORS" ]; then
   echo "Error: prd.json schema invalid:"
   echo "$SCHEMA_ERRORS"
+  exit 1
+fi
+
+# Validate prompt file exists
+if [ ! -f "$PROMPT_FILE" ]; then
+  echo "Error: CLAUDE.md not found at $PROMPT_FILE"
   exit 1
 fi
 
@@ -208,8 +215,6 @@ MAX_STUCK=3
 
 # Create log directory once
 mkdir -p "$LOG_DIR"
-
-PROMPT_FILE="$SCRIPT_DIR/CLAUDE.md"
 
 for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
