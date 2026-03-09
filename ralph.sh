@@ -438,15 +438,6 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     exit 0
   fi
 
-  # Also honor the legacy <promise> signal (grep the log file, not a variable)
-  if grep -q "<promise>COMPLETE</promise>" "$ITER_LOG" 2>/dev/null; then
-    echo ""
-    echo "Ralph signaled completion ($PASSED/$TOTAL stories show passed in prd.json)"
-    echo "Completed at iteration $i of $MAX_ITERATIONS"
-    notify "Ralph DONE" "Signaled complete at iteration $i ($PASSED/$TOTAL passed)"
-    exit 0
-  fi
-
   echo "Iteration $i complete. Continuing..."
   sleep 2
 done

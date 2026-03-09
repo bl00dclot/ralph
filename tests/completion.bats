@@ -12,13 +12,14 @@ load test_helper
   [[ "$output" == *"Ralph completed all tasks!"* ]]
 }
 
-@test "exits 0 when AI outputs promise tag" {
+@test "ignores promise tag — only prd.json completion matters" {
   use_fixture "valid-prd.json"
   export MOCK_CLAUDE_BEHAVIOR="promise"
 
+  # Promise tag without all stories passed should NOT exit 0
   run "$RALPH_DIR/ralph.sh" --tool claude 1
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"signaled completion"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"signaled completion"* ]]
 }
 
 @test "prd.json completion takes priority over iteration count" {
