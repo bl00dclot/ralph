@@ -96,6 +96,31 @@ if [ "$STORY_COUNT" -eq 0 ]; then
   exit 1
 fi
 
+# --- Schema validation ---
+SCHEMA_ERRORS=$(jq -r '
+  [.userStories[] | {
+    id: (.id // "unknown"),
+    missing: (
+      [
+        (if (.id | type) != "string" then "id must be string" else empty end),
+        (if (.title | type) != "string" then "title must be string" else empty end),
+        (if (.description | type) != "string" then "description must be string" else empty end),
+        (if (.acceptanceCriteria | type) != "array" then "acceptanceCriteria must be array" else empty end),
+        (if (.priority | type) != "number" then "priority must be number" else empty end),
+        (if (.passes | type) != "boolean" then "passes must be boolean" else empty end),
+        (if has("notes") and (.notes | type) != "string" then "notes must be string" else empty end),
+        (if (has("id") and has("title") and has("description") and has("acceptanceCriteria") and has("priority") and has("passes")) then empty else "missing required fields" end)
+      ]
+    )
+  } | select(.missing | length > 0) | "\(.id): \(.missing | join(", "))"] | join("\n")
+' "$PRD_FILE")
+
+if [ -n "$SCHEMA_ERRORS" ]; then
+  echo "Error: prd.json schema invalid:"
+  echo "$SCHEMA_ERRORS"
+  exit 1
+fi
+
 # Warn (don't block) on dirty working tree
 if ! git diff --quiet 2>/dev/null; then
   echo "Warning: Working tree has uncommitted changes."
