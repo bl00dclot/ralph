@@ -260,6 +260,40 @@ See `prd.json.example` for a full example.
 - Always include: `"Typecheck passes"`
 - For UI stories, include: `"Verify in browser using dev-browser skill"`
 
+## Data Precision Guard
+
+Ralph guards `prd.json` against AI format drift. Each iteration, Ralph snapshots `prd.json` before running the AI, then diffs after to detect violations.
+
+### What the AI can change
+
+| Field | Allowed |
+|-------|---------|
+| `userStories[].passes` | `false` → `true` only (max 1 per iteration) |
+| `userStories[].notes` | Any change |
+| Everything else | Immutable — `project`, `branchName`, `description`, story `id`, `title`, `description`, `acceptanceCriteria`, `priority` |
+
+### What triggers a failure
+
+| Violation | What happens |
+|-----------|-------------|
+| Immutable field changed | prd.json restored from snapshot, exit 3 |
+| Multiple stories completed in one iteration | prd.json restored from snapshot, exit 3 |
+| Completed story reverted (`true` → `false`) | prd.json restored from snapshot, exit 3 |
+| prd.json corrupted (invalid JSON) | prd.json restored from snapshot, exit 3 |
+
+### Other safeguards
+
+- **Lockfile** (`.ralph/ralph.lock`) prevents concurrent Ralph instances
+- **Schema validation** at startup checks field names and types
+- **CLAUDE.md existence** validated before running
+- **Single completion path** — only `prd.json` all-passed triggers completion (no promise tags)
+
+### Runtime directory
+
+`.ralph/` holds runtime state (gitignored):
+- `snapshot.json` — prd.json copy from before current iteration
+- `ralph.lock` — lockfile with PID
+
 ## Project Structure
 
 ```
@@ -270,8 +304,10 @@ ralph/
 ├── package.json             # Dev dependencies (bats for testing)
 ├── .claude/
 │   └── settings.local.json  # Claude Code permissions
+├── docs/
+│   └── plans/               # Design and implementation docs
 ├── tests/                   # BATS test suite
-│   ├── preflight.bats       # PRD validation tests
+│   ├── preflight.bats       # PRD + schema validation tests
 │   ├── argument_parsing.bats
 │   ├── completion.bats
 │   ├── dry_run.bats
@@ -279,6 +315,8 @@ ralph/
 │   ├── timeout.bats
 │   ├── stuck_detection.bats
 │   ├── archive.bats
+│   ├── lockfile.bats         # Concurrent execution tests
+│   ├── guard.bats            # Contract violation tests
 │   ├── fixtures/             # Test PRD files
 │   └── mocks/                # Mock claude/amp binaries
 │
@@ -288,6 +326,9 @@ ralph/
 ├── progress.txt             # Append-only progress log
 ├── logs/                    # Per-iteration output logs
 │   └── iteration-N.log
+├── .ralph/                  # Runtime state (gitignored)
+│   ├── snapshot.json        # Pre-iteration prd.json backup
+│   └── ralph.lock           # Lockfile
 ├── archive/                 # Archived previous runs
 │   └── YYYY-MM-DD-branch/
 └── .last-branch             # Branch tracking for archiving
@@ -295,36 +336,42 @@ ralph/
 
 ## How ralph.sh Works Internally
 
-The script is ~275 lines of bash. Here's what happens when you run it:
+Here's what happens when you run it:
 
-### 1. Argument Parsing (lines 14-62)
+### 1. Argument Parsing
 Parses `--tool`, `--timeout`, `--dry-run`, `--notify`, and positional `max_iterations`. Supports both `--flag value` and `--flag=value` syntax.
 
-### 2. Preflight Checks (lines 76-102)
+### 2. Preflight Checks
 - Validates `prd.json` exists and is valid JSON
-- Checks for `branchName` field
-- Checks for non-empty `userStories` array
+- Checks for `branchName` field and non-empty `userStories`
+- **Schema validation** — every story must have correct field names and types
+- Validates `CLAUDE.md` exists
 - Warns (doesn't block) on dirty working tree
 
-### 3. Branch Archiving (lines 137-168)
-If the `branchName` in `prd.json` differs from `.last-branch`, Ralph archives the previous run's `prd.json` and `progress.txt` to `archive/YYYY-MM-DD-branchname/` and resets `progress.txt`.
+### 3. Lockfile
+Creates `.ralph/ralph.lock` with PID. If another Ralph is already running, exits. Stale locks from dead processes are cleaned up automatically. Trap ensures cleanup on exit.
 
-### 4. Main Loop (lines 189-268)
+### 4. Branch Archiving
+If the `branchName` in `prd.json` differs from `.last-branch`, Ralph archives the previous run's `prd.json`, `progress.txt`, `CLAUDE.md`, and `logs/` to `archive/YYYY-MM-DD-branchname/`.
+
+### 5. Main Loop
 For each iteration:
-- Runs the AI tool with `CLAUDE.md` piped via stdin
-- Uses `timeout` command to enforce per-iteration timeout
-- Pipes output through `tee` for live terminal display + log file
-- **Stuck detection:** If the same story fails 3 consecutive iterations, exits with code 2
-- **Completion check:** Reads `prd.json` - if all stories have `passes: true`, exits with code 0
-- **Legacy signal:** Also checks for `<promise>COMPLETE</promise>` in output
+- **Snapshot** `prd.json` to `.ralph/snapshot.json`
+- Run the AI tool with `CLAUDE.md` piped via stdin
+- `timeout` enforces per-iteration time limit
+- Output piped through `tee` for live display + log file
+- **Contract guard:** diff snapshot vs current prd.json (see [Data Precision Guard](#data-precision-guard))
+- **Stuck detection:** same story fails 3 consecutive iterations → exit 2
+- **Completion check:** all stories `passes: true` → exit 0
 
-### 5. Exit Codes
+### 6. Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | All stories passed |
-| 1 | Max iterations reached |
-| 2 | Stuck - same story failed 3+ times |
+| 1 | Max iterations reached / lockfile conflict |
+| 2 | Stuck — same story failed 3+ times |
+| 3 | Contract violation — AI mutated immutable data |
 
 ## Debugging
 
@@ -354,7 +401,7 @@ npm test              # Run all tests
 npm run test:verbose  # Verbose output
 ```
 
-Test suites cover: preflight validation, argument parsing, completion logic, dry run, logging, timeout handling, stuck detection, and archiving.
+Test suites cover: preflight validation, schema validation, argument parsing, completion logic, dry run, logging, timeout handling, stuck detection, archiving, lockfile, and contract guard.
 
 ## References
 

@@ -49,6 +49,12 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Arguments:"
       echo "  max_iterations      Maximum loop iterations (default: 10)"
+      echo ""
+      echo "Exit codes:"
+      echo "  0  All stories passed"
+      echo "  1  Max iterations reached / lockfile conflict"
+      echo "  2  Stuck — same story failed 3+ consecutive iterations"
+      echo "  3  Contract violation — AI mutated immutable data"
       exit 0
       ;;
     *)
