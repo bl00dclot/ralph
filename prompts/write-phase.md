@@ -1,6 +1,6 @@
 # Write Phase: Implementation
 
-Implement the user story below. You have NO Read tool — all context you need is provided in this prompt.
+Implement the user story below. Pre-digested context is provided; you also have Read access for verifying details.
 
 ## Current Story
 
@@ -21,5 +21,7 @@ Implement the user story below. You have NO Read tool — all context you need i
 
 ## Available Tools
 
-You can only use: Edit, Write, and Bash (for git commands only).
-You do NOT have Read access — rely entirely on the context above.
+You have Read access for checking file contents before editing.
+Rely primarily on the pre-digested context above for architecture
+decisions — use Read only to verify specific details (imports,
+exact signatures, surrounding code) before making edits.

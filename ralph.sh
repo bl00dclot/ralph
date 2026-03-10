@@ -285,7 +285,7 @@ $phase_prompt"
   echo "$combined" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
-    --allowed-tools "Edit Write Bash" \
+    --allowed-tools "Read Edit Write Bash" \
     2>&1
 }
 
