@@ -52,6 +52,9 @@ while [[ $# -gt 0 ]]; do
       echo "  1  Max iterations reached / lockfile conflict"
       echo "  2  Stuck — same story failed 3+ consecutive iterations"
       echo "  3  Contract violation — AI mutated immutable data"
+      echo ""
+      echo "Rate-limited phases are retried automatically (up to 3 times with escalating waits)."
+      echo "Configure via env vars: RATE_LIMIT_BASE_WAIT (default: 60s), RATE_LIMIT_MAX_RETRIES (default: 3)."
       exit 0
       ;;
     *)
@@ -246,6 +249,72 @@ build_phase_prompt() {
   fi
 
   echo "$result"
+}
+
+# --- Rate limit detection and retry ---
+RATE_LIMIT_BASE_WAIT="${RATE_LIMIT_BASE_WAIT:-60}"
+RATE_LIMIT_MAX_RETRIES="${RATE_LIMIT_MAX_RETRIES:-3}"
+
+is_rate_limited() {
+  local log_file="$1"
+  local exit_code="$2"
+  # Successful phases are never rate-limited
+  if [ "$exit_code" -eq 0 ]; then
+    return 1
+  fi
+  if [ ! -f "$log_file" ]; then
+    return 1
+  fi
+  grep -qiE 'rate.?limit|too many requests|429|overloaded' "$log_file"
+}
+
+run_phase_with_retry() {
+  local phase_name="$1"
+  local log_file="$2"
+  local output_file="$3"  # optional: file to capture stdout (read phase)
+
+  local attempt=0
+  local phase_exit=0
+
+  while true; do
+    set +e
+    set -o pipefail
+    if [ -n "$output_file" ]; then
+      "run_${phase_name}_phase" | tee "$log_file" > "$output_file"
+    else
+      "run_${phase_name}_phase" | tee "$log_file"
+    fi
+    phase_exit=$?
+    set +o pipefail
+    set -e
+
+    # Timeout is never retried
+    if [ "$phase_exit" -eq 124 ]; then
+      echo "  WARNING: ${phase_name} phase timed out after $TIMEOUT"
+      break
+    fi
+
+    # Check for rate limit
+    if is_rate_limited "$log_file" "$phase_exit"; then
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge "$RATE_LIMIT_MAX_RETRIES" ]; then
+        echo "  ERROR: Rate limited $attempt times on $phase_name phase, giving up"
+        echo "[$(date)] Rate limit: $phase_name phase for $CURRENT_STORY_ID - gave up after $attempt retries" >> "$PROGRESS_FILE"
+        break
+      fi
+      local wait_time=$((RATE_LIMIT_BASE_WAIT * attempt))
+      echo "  RATE LIMITED: Waiting ${wait_time}s before retry ($attempt/$RATE_LIMIT_MAX_RETRIES)..."
+      echo "[$(date)] Rate limit: $phase_name phase for $CURRENT_STORY_ID - retry $attempt in ${wait_time}s" >> "$PROGRESS_FILE"
+      sleep "$wait_time"
+      continue
+    fi
+
+    # No rate limit — phase completed (success or normal failure)
+    break
+  done
+
+  # Always return 0 — the main loop uses stuck detection, not exit codes
+  return 0
 }
 
 # --- Phase runners ---
@@ -530,17 +599,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo "  --- Phase 1: READ ($CURRENT_STORY_ID) ---"
   READ_LOG="$LOG_DIR/iteration-$i-read.log"
   rm -f "$CONTEXT_FILE"
-  PHASE_EXIT=0
-  set +e
-  set -o pipefail
-  run_read_phase | tee "$READ_LOG" > "$CONTEXT_FILE"
-  PHASE_EXIT=$?
-  set +o pipefail
-  set -e
-
-  if [ "$PHASE_EXIT" -eq 124 ]; then
-    echo "  WARNING: Read phase timed out after $TIMEOUT"
-  fi
+  run_phase_with_retry "read" "$READ_LOG" "$CONTEXT_FILE"
 
   # Verify context was produced
   if [ ! -s "$CONTEXT_FILE" ]; then
@@ -554,31 +613,13 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
   echo "  --- Phase 2: WRITE ($CURRENT_STORY_ID) ---"
   WRITE_LOG="$LOG_DIR/iteration-$i-write.log"
-  set +e
-  set -o pipefail
-  run_write_phase | tee "$WRITE_LOG"
-  PHASE_EXIT=$?
-  set +o pipefail
-  set -e
-
-  if [ "$PHASE_EXIT" -eq 124 ]; then
-    echo "  WARNING: Write phase timed out after $TIMEOUT"
-  fi
+  run_phase_with_retry "write" "$WRITE_LOG"
 
   # === PHASE 3: VERIFY ===
   echo ""
   echo "  --- Phase 3: VERIFY ($CURRENT_STORY_ID) ---"
   VERIFY_LOG="$LOG_DIR/iteration-$i-verify.log"
-  set +e
-  set -o pipefail
-  run_verify_phase | tee "$VERIFY_LOG"
-  PHASE_EXIT=$?
-  set +o pipefail
-  set -e
-
-  if [ "$PHASE_EXIT" -eq 124 ]; then
-    echo "  WARNING: Verify phase timed out after $TIMEOUT"
-  fi
+  run_phase_with_retry "verify" "$VERIFY_LOG"
 
   # --- Contract guard ---
   if ! check_contract; then

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Mock claude CLI — phase-aware for 3-phase Ralph
 # Detects phase from --allowed-tools argument
-# MOCK_CLAUDE_BEHAVIOR controls verify phase: pass, fail, mutate, multi-pass, revert, corrupt, promise
+# MOCK_CLAUDE_BEHAVIOR controls verify phase: pass, fail, mutate, multi-pass, revert, corrupt, promise, ratelimit
 
 # Consume stdin
 cat > /dev/null
@@ -37,6 +37,25 @@ elif [[ "$ALLOWED_TOOLS" == *"Edit"* ]] && [[ "$ALLOWED_TOOLS" == *"mcp__plugin_
 fi
 
 BEHAVIOR="${MOCK_CLAUDE_BEHAVIOR:-fail}"
+
+# Rate limit simulation: first N calls fail with rate limit error, then succeed
+if [ "$BEHAVIOR" = "ratelimit" ]; then
+  COUNTER_FILE="${MOCK_RATELIMIT_COUNTER:-/tmp/ralph-ratelimit-count}"
+  COUNT=0
+  if [ -f "$COUNTER_FILE" ]; then
+    COUNT=$(cat "$COUNTER_FILE")
+  fi
+  COUNT=$((COUNT + 1))
+  echo "$COUNT" > "$COUNTER_FILE"
+
+  RATELIMIT_FAIL_COUNT="${MOCK_RATELIMIT_FAIL_COUNT:-2}"
+  if [ "$COUNT" -le "$RATELIMIT_FAIL_COUNT" ]; then
+    echo "Error: rate limit exceeded. Please wait before trying again."
+    exit 1
+  fi
+  # Rate limit cleared — fall through with the "then" behavior
+  BEHAVIOR="${MOCK_RATELIMIT_THEN:-pass}"
+fi
 
 case "$PHASE" in
   read)
