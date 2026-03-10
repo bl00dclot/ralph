@@ -1,93 +1,132 @@
 #!/bin/bash
-# Mock claude CLI — reads stdin, prints a fake response, optionally marks a story as passed
-# Behavior controlled by MOCK_CLAUDE_BEHAVIOR env var:
-#   "pass"    — mark the next incomplete story as passed in prd.json and output completion
-#   "fail"    — output something but don't mark anything
-#   "promise" — output <promise>COMPLETE</promise> without updating prd.json
-#   "hang"    — sleep forever (for timeout testing)
-#   "crash"   — exit 1
+# Mock claude CLI — phase-aware for 3-phase Ralph
+# Detects phase from --allowed-tools argument
+# MOCK_CLAUDE_BEHAVIOR controls verify phase: pass, fail, mutate, multi-pass, revert, corrupt, promise
 
 # Consume stdin
 cat > /dev/null
 
+# Detect phase from --allowed-tools
+PHASE="unknown"
+ALLOWED_TOOLS=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --allowed-tools)
+      ALLOWED_TOOLS="$2"
+      shift 2
+      ;;
+    --print|--dangerously-skip-permissions|--strict-mcp-config)
+      shift
+      ;;
+    --mcp-config)
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Determine phase based on allowed tools
+if [[ "$ALLOWED_TOOLS" == *"mcp__plugin_serena"* ]] && [[ "$ALLOWED_TOOLS" != *"Edit"* ]]; then
+  PHASE="read"
+elif [[ "$ALLOWED_TOOLS" == *"Edit Write Bash"* ]] && [[ "$ALLOWED_TOOLS" != *"mcp__plugin_serena"* ]]; then
+  PHASE="write"
+elif [[ "$ALLOWED_TOOLS" == *"Edit"* ]] && [[ "$ALLOWED_TOOLS" == *"mcp__plugin_serena"* ]]; then
+  PHASE="verify"
+fi
+
 BEHAVIOR="${MOCK_CLAUDE_BEHAVIOR:-fail}"
 
-case "$BEHAVIOR" in
-  pass)
-    echo "Ralph iteration: implementing next story..."
-    # Find and mark the next incomplete story
-    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-      NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-      if [ -n "$NEXT_ID" ]; then
-        jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-        echo "Marked $NEXT_ID as passed."
-      fi
-      # Check if all done
-      REMAINING=$(jq '[.userStories[] | select(.passes != true)] | length' "$MOCK_PRD_FILE")
-      if [ "$REMAINING" -eq 0 ]; then
+case "$PHASE" in
+  read)
+    # Output context to stdout (ralph.sh captures this as context.md)
+    echo "### Relevant Files"
+    echo "- src/main.ts: Main entry point"
+    echo ""
+    echo "### Key Symbols"
+    echo "- function main(): entry point"
+    echo ""
+    echo "### Code Snippets"
+    echo "No specific snippets needed."
+    echo ""
+    echo "### Implementation Notes"
+    echo "Follow existing patterns."
+    ;;
+  write)
+    echo "Ralph write phase: implementing changes for story..."
+    echo "Changes committed."
+    ;;
+  verify)
+    case "$BEHAVIOR" in
+      pass)
+        echo "Ralph verify phase: checking acceptance criteria..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+          if [ -n "$NEXT_ID" ]; then
+            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+            echo "Verified $NEXT_ID: all criteria passed."
+          fi
+        fi
+        ;;
+      fail)
+        echo "Ralph verify phase: checking acceptance criteria..."
+        echo "Verification failed: criteria not met."
+        ;;
+      mutate)
+        echo "Ralph verify phase: checking..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+          if [ -n "$NEXT_ID" ]; then
+            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).title = "MUTATED TITLE" | (.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+          fi
+        fi
+        ;;
+      multi-pass)
+        echo "Ralph verify phase: marking all..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          jq '(.userStories[] | select(.passes != true)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+          mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+        fi
+        ;;
+      revert)
+        echo "Ralph verify phase: reverting..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          FIRST_PASSED=$(jq -r '[.userStories[] | select(.passes == true)] | .[0].id // empty' "$MOCK_PRD_FILE")
+          if [ -n "$FIRST_PASSED" ]; then
+            jq --arg id "$FIRST_PASSED" '(.userStories[] | select(.id == $id)).passes = false' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+          fi
+        fi
+        ;;
+      corrupt)
+        echo "Ralph verify phase: corrupting..."
+        if [ -n "$MOCK_PRD_FILE" ]; then
+          echo "not valid json {{{" > "$MOCK_PRD_FILE"
+        fi
+        ;;
+      promise)
+        echo "Ralph verify phase: outputting promise tag."
         echo "<promise>COMPLETE</promise>"
-      fi
-    fi
-    ;;
-  fail)
-    echo "Ralph iteration: attempted story but failed."
-    echo "Something went wrong, will try again."
-    ;;
-  promise)
-    echo "Ralph iteration: signaling completion."
-    echo "<promise>COMPLETE</promise>"
-    ;;
-  hang)
-    echo "Ralph iteration: starting long task..."
-    sleep 3600
-    ;;
-  crash)
-    echo "Ralph iteration: fatal error!" >&2
-    exit 1
-    ;;
-  mutate)
-    # Mutate an immutable field (change a story title)
-    echo "Ralph iteration: implementing story..."
-    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-      NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-      if [ -n "$NEXT_ID" ]; then
-        jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).title = "MUTATED TITLE" | (.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-        echo "Marked $NEXT_ID as passed (and mutated title)."
-      fi
-    fi
-    ;;
-  multi-pass)
-    # Mark multiple stories as passed in one iteration
-    echo "Ralph iteration: implementing ALL stories..."
-    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-      jq '(.userStories[] | select(.passes != true)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-      mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-      echo "Marked all stories as passed."
-    fi
-    ;;
-  revert)
-    # Revert a previously passed story back to false
-    echo "Ralph iteration: reverting story..."
-    if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-      FIRST_PASSED=$(jq -r '[.userStories[] | select(.passes == true)] | .[0].id // empty' "$MOCK_PRD_FILE")
-      if [ -n "$FIRST_PASSED" ]; then
-        jq --arg id "$FIRST_PASSED" '(.userStories[] | select(.id == $id)).passes = false' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-        mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-        echo "Reverted $FIRST_PASSED."
-      fi
-    fi
-    ;;
-  corrupt)
-    # Write invalid JSON to prd.json
-    echo "Ralph iteration: corrupting prd.json..."
-    if [ -n "$MOCK_PRD_FILE" ]; then
-      echo "not valid json {{{" > "$MOCK_PRD_FILE"
-    fi
+        ;;
+      hang)
+        echo "Ralph: starting long task..."
+        sleep 3600
+        ;;
+      crash)
+        echo "Ralph: fatal error!" >&2
+        exit 1
+        ;;
+      *)
+        echo "Unknown mock behavior: $BEHAVIOR"
+        exit 1
+        ;;
+    esac
     ;;
   *)
-    echo "Unknown mock behavior: $BEHAVIOR"
-    exit 1
+    # Fallback for tests that don't use phases (e.g., old-style invocations)
+    echo "Mock claude called without recognized phase."
     ;;
 esac

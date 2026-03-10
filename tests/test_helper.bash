@@ -26,6 +26,18 @@ setup() {
   # Create a minimal CLAUDE.md prompt
   echo "You are Ralph. Do the work." > "$RALPH_DIR/CLAUDE.md"
 
+  # Copy prompt templates
+  mkdir -p "$RALPH_DIR/prompts"
+  printf "# Read phase template\n\n{{STORY_BLOCK}}" > "$RALPH_DIR/prompts/read-phase.md"
+  printf "# Write phase template\n\n{{STORY_BLOCK}}\n\n{{CONTEXT_BLOCK}}" > "$RALPH_DIR/prompts/write-phase.md"
+  printf "# Verify phase template\n\n{{STORY_BLOCK}}\n\n{{PRD_FILE}}\n{{PROGRESS_FILE}}" > "$RALPH_DIR/prompts/verify-phase.md"
+
+  # Create .ralph state directory
+  mkdir -p "$RALPH_DIR/.ralph"
+
+  # Create Serena MCP config template
+  echo '{"mcpServers":{"serena":{"command":"echo","args":["mock"]}}}' > "$RALPH_DIR/serena-mcp.json"
+
   # Put mocks on PATH (before real tools)
   export PATH="$MOCKS:$PATH"
 

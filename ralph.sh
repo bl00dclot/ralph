@@ -1,11 +1,15 @@
 #!/bin/bash
-# Ralph Wiggum - Long-running AI agent loop
-# Usage: ./ralph.sh [--tool amp|claude] [--timeout 30m] [--dry-run] [--notify] [max_iterations]
+# Ralph Wiggum - 3-phase autonomous AI agent loop
+# Usage: ./ralph.sh [--timeout 30m] [--dry-run] [--notify] [max_iterations]
+#
+# Each iteration runs three phases:
+#   1. READ  — Serena-based codebase survey (read-only)
+#   2. WRITE — Code implementation (write-only, no Read tool)
+#   3. VERIFY — Acceptance criteria checks, updates prd.json
 
 set -e
 
 # Parse arguments
-TOOL="amp"  # Default to amp for backwards compatibility
 MAX_ITERATIONS=10
 TIMEOUT="30m"
 DRY_RUN=false
@@ -13,14 +17,6 @@ NOTIFY=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --tool)
-      TOOL="$2"
-      shift 2
-      ;;
-    --tool=*)
-      TOOL="${1#*=}"
-      shift
-      ;;
     --timeout)
       TIMEOUT="$2"
       shift 2
@@ -40,9 +36,10 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: ralph.sh [OPTIONS] [max_iterations]"
       echo ""
+      echo "3-phase autonomous AI agent loop (Read → Write → Verify)."
+      echo ""
       echo "Options:"
-      echo "  --tool amp|claude   AI backend (default: amp)"
-      echo "  --timeout DURATION  Max time per iteration (default: 30m)"
+      echo "  --timeout DURATION  Max time per phase (default: 30m)"
       echo "  --dry-run           Show next story and exit without running"
       echo "  --notify            Send desktop notification on completion"
       echo "  --help              Show this help"
@@ -67,18 +64,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Validate tool choice
-if [[ "$TOOL" != "amp" && "$TOOL" != "claude" ]]; then
-  echo "Error: Invalid tool '$TOOL'. Must be 'amp' or 'claude'."
-  exit 1
-fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || realpath "$SCRIPT_DIR/../..")"
 PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 ARCHIVE_DIR="$SCRIPT_DIR/archive"
 LAST_BRANCH_FILE="$SCRIPT_DIR/.last-branch"
 LOG_DIR="$SCRIPT_DIR/logs"
 PROMPT_FILE="$SCRIPT_DIR/CLAUDE.md"
+PROMPTS_DIR="$SCRIPT_DIR/prompts"
+SERENA_CONFIG_TEMPLATE="$SCRIPT_DIR/serena-mcp.json"
 
 # --- Preflight checks ---
 if [ ! -f "$PRD_FILE" ]; then
@@ -134,6 +129,14 @@ if [ ! -f "$PROMPT_FILE" ]; then
   exit 1
 fi
 
+# Validate prompt templates exist
+for phase_prompt in read-phase.md write-phase.md verify-phase.md; do
+  if [ ! -f "$PROMPTS_DIR/$phase_prompt" ]; then
+    echo "Error: Missing prompt template: $PROMPTS_DIR/$phase_prompt"
+    exit 1
+  fi
+done
+
 # Warn (don't block) on dirty working tree
 if ! git diff --quiet 2>/dev/null; then
   echo "Warning: Working tree has uncommitted changes."
@@ -142,6 +145,8 @@ fi
 # --- Lockfile ---
 RALPH_STATE_DIR="$SCRIPT_DIR/.ralph"
 LOCKFILE="$RALPH_STATE_DIR/ralph.lock"
+CONTEXT_FILE="$RALPH_STATE_DIR/context.md"
+CURRENT_STORY_FILE="$RALPH_STATE_DIR/current-story.json"
 
 cleanup() {
   rm -f "$LOCKFILE"
@@ -178,6 +183,127 @@ notify() {
       osascript -e "display notification \"$body\" with title \"$title\"" 2>/dev/null || true
     fi
   fi
+}
+
+# --- Helper: extract current story ---
+extract_current_story() {
+  local story
+  story=$(jq '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0] // empty' "$PRD_FILE")
+
+  if [ -z "$story" ] || [ "$story" = "null" ]; then
+    return 1
+  fi
+
+  echo "$story" > "$CURRENT_STORY_FILE"
+  CURRENT_STORY_ID=$(echo "$story" | jq -r '.id')
+  CURRENT_STORY_TITLE=$(echo "$story" | jq -r '.title')
+  return 0
+}
+
+# --- Helper: build Serena MCP config ---
+build_serena_config() {
+  if [ -f "$SERENA_CONFIG_TEMPLATE" ]; then
+    sed "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g" "$SERENA_CONFIG_TEMPLATE" > "$RALPH_STATE_DIR/serena-mcp.json"
+    return 0
+  else
+    return 1
+  fi
+}
+
+# --- Helper: build phase prompt with story data ---
+build_phase_prompt() {
+  local template_file="$1"
+  local template
+  template=$(cat "$PROMPTS_DIR/$template_file")
+
+  # Build story block from current-story.json
+  local story_block
+  story_block=$(jq -r '
+    "- **ID:** " + .id + "\n" +
+    "- **Title:** " + .title + "\n" +
+    "- **Description:** " + .description + "\n" +
+    "- **Acceptance Criteria:**\n" +
+    (.acceptanceCriteria | map("  - " + .) | join("\n"))
+  ' "$CURRENT_STORY_FILE")
+
+  # Substitute placeholders
+  local result
+  result="${template//\{\{STORY_BLOCK\}\}/$story_block}"
+  result="${result//\{\{STORY_ID\}\}/$CURRENT_STORY_ID}"
+  result="${result//\{\{STORY_TITLE\}\}/$CURRENT_STORY_TITLE}"
+  result="${result//\{\{PRD_FILE\}\}/$PRD_FILE}"
+  result="${result//\{\{PROGRESS_FILE\}\}/$PROGRESS_FILE}"
+
+  # For write phase: inject context
+  if [ "$template_file" = "write-phase.md" ]; then
+    local context=""
+    if [ -f "$CONTEXT_FILE" ]; then
+      context=$(cat "$CONTEXT_FILE")
+    else
+      context="No context available from read phase."
+    fi
+    result="${result//\{\{CONTEXT_BLOCK\}\}/$context}"
+  fi
+
+  echo "$result"
+}
+
+# --- Phase runners ---
+
+# Serena read-only tools (no write/edit Serena tools)
+SERENA_READ_TOOLS="mcp__plugin_serena_serena__get_symbols_overview mcp__plugin_serena_serena__find_symbol mcp__plugin_serena_serena__read_file mcp__plugin_serena_serena__list_dir mcp__plugin_serena_serena__search_for_pattern mcp__plugin_serena_serena__find_referencing_symbols mcp__plugin_serena_serena__find_file"
+
+run_read_phase() {
+  local prompt
+  prompt="$(build_phase_prompt read-phase.md)"
+
+  local serena_args=""
+  if [ -f "$RALPH_STATE_DIR/serena-mcp.json" ]; then
+    serena_args="--mcp-config $RALPH_STATE_DIR/serena-mcp.json --strict-mcp-config"
+  fi
+
+  echo "$prompt" | timeout "$TIMEOUT" claude \
+    --print \
+    --dangerously-skip-permissions \
+    --allowed-tools "Read $SERENA_READ_TOOLS" \
+    $serena_args \
+    2>&1
+}
+
+run_write_phase() {
+  local phase_prompt
+  phase_prompt="$(build_phase_prompt write-phase.md)"
+
+  # Combine CLAUDE.md + write phase prompt (which includes context)
+  local combined
+  combined="$(cat "$PROMPT_FILE")
+
+---
+
+$phase_prompt"
+
+  echo "$combined" | timeout "$TIMEOUT" claude \
+    --print \
+    --dangerously-skip-permissions \
+    --allowed-tools "Edit Write Bash" \
+    2>&1
+}
+
+run_verify_phase() {
+  local prompt
+  prompt="$(build_phase_prompt verify-phase.md)"
+
+  local serena_args=""
+  if [ -f "$RALPH_STATE_DIR/serena-mcp.json" ]; then
+    serena_args="--mcp-config $RALPH_STATE_DIR/serena-mcp.json --strict-mcp-config"
+  fi
+
+  echo "$prompt" | timeout "$TIMEOUT" claude \
+    --print \
+    --dangerously-skip-permissions \
+    --allowed-tools "Bash Read Edit Write $SERENA_READ_TOOLS" \
+    $serena_args \
+    2>&1
 }
 
 # --- Diff guard: validate AI did not violate the contract ---
@@ -321,14 +447,14 @@ fi
 if [ -f "$PRD_FILE" ] && [ -f "$LAST_BRANCH_FILE" ]; then
   CURRENT_BRANCH=$(jq -r '.branchName // empty' "$PRD_FILE" 2>/dev/null || echo "")
   LAST_BRANCH=$(cat "$LAST_BRANCH_FILE" 2>/dev/null || echo "")
-  
+
   if [ -n "$CURRENT_BRANCH" ] && [ -n "$LAST_BRANCH" ] && [ "$CURRENT_BRANCH" != "$LAST_BRANCH" ]; then
     # Archive the previous run
     DATE=$(date +%Y-%m-%d)
     # Strip "ralph/" prefix from branch name for folder
     FOLDER_NAME=$(echo "$LAST_BRANCH" | sed 's|^ralph/||')
     ARCHIVE_FOLDER="$ARCHIVE_DIR/$DATE-$FOLDER_NAME"
-    
+
     echo "Archiving previous run: $LAST_BRANCH"
     mkdir -p "$ARCHIVE_FOLDER"
     [ -f "$PRD_FILE" ] && cp "$PRD_FILE" "$ARCHIVE_FOLDER/"
@@ -336,7 +462,7 @@ if [ -f "$PRD_FILE" ] && [ -f "$LAST_BRANCH_FILE" ]; then
     [ -f "$PROMPT_FILE" ] && cp "$PROMPT_FILE" "$ARCHIVE_FOLDER/"
     [ -d "$LOG_DIR" ] && cp -r "$LOG_DIR" "$ARCHIVE_FOLDER/"
     echo "   Archived to: $ARCHIVE_FOLDER"
-    
+
     # Reset progress file for new run
     echo "# Ralph Progress Log" > "$PROGRESS_FILE"
     echo "Started: $(date)" >> "$PROGRESS_FILE"
@@ -359,7 +485,16 @@ if [ ! -f "$PROGRESS_FILE" ]; then
   echo "---" >> "$PROGRESS_FILE"
 fi
 
-echo "Starting Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
+echo "Starting Ralph - 3-phase mode - Max iterations: $MAX_ITERATIONS"
+
+# Build Serena config once
+SERENA_AVAILABLE=false
+if build_serena_config; then
+  SERENA_AVAILABLE=true
+  echo "  Serena MCP: available"
+else
+  echo "  Serena MCP: not available (no serena-mcp.json template)"
+fi
 
 # Stuck detection: track consecutive failures on the same story
 STUCK_STORY=""
@@ -372,36 +507,78 @@ mkdir -p "$LOG_DIR"
 for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
   echo "==============================================================="
-  echo "  Ralph Iteration $i of $MAX_ITERATIONS ($TOOL)"
+  echo "  Ralph Iteration $i of $MAX_ITERATIONS"
   echo "==============================================================="
 
   # --- Snapshot prd.json before iteration ---
   cp "$PRD_FILE" "$RALPH_STATE_DIR/snapshot.json"
 
-  ITER_LOG="$LOG_DIR/iteration-$i.log"
+  # --- Extract current story ---
+  if ! extract_current_story; then
+    echo "All stories already complete."
+    TOTAL=$(jq '.userStories | length' "$PRD_FILE")
+    echo ""
+    echo "Ralph completed all tasks! ($TOTAL/$TOTAL stories passed)"
+    echo "Completed at iteration $i of $MAX_ITERATIONS"
+    notify "Ralph DONE" "All $TOTAL stories passed in $i iterations"
+    exit 0
+  fi
+  echo "  Story: $CURRENT_STORY_ID - $CURRENT_STORY_TITLE"
 
-  # Run the AI tool, streaming output live to terminal AND to log file.
-  # tee writes to the log file while stdout goes directly to the terminal
-  # (no $() capture = no pipe buffering = live output).
-  # pipefail ensures we capture timeout's exit code (124) through the pipe.
-  ITER_EXIT=0
+  # === PHASE 1: READ ===
+  echo ""
+  echo "  --- Phase 1: READ ($CURRENT_STORY_ID) ---"
+  READ_LOG="$LOG_DIR/iteration-$i-read.log"
+  rm -f "$CONTEXT_FILE"
+  PHASE_EXIT=0
   set +e
   set -o pipefail
-  if [[ "$TOOL" == "amp" ]]; then
-    timeout "$TIMEOUT" bash -c 'cat "$1" | amp --dangerously-allow-all 2>&1' _ "$PROMPT_FILE" | tee "$ITER_LOG"
-    ITER_EXIT=$?
-  else
-    timeout "$TIMEOUT" bash -c 'claude --dangerously-skip-permissions --print < "$1" 2>&1' _ "$PROMPT_FILE" | tee "$ITER_LOG"
-    ITER_EXIT=$?
-  fi
+  run_read_phase | tee "$READ_LOG" > "$CONTEXT_FILE"
+  PHASE_EXIT=$?
   set +o pipefail
   set -e
 
-  if [ "$ITER_EXIT" -eq 124 ]; then
-    echo "  WARNING: Iteration $i timed out after $TIMEOUT"
+  if [ "$PHASE_EXIT" -eq 124 ]; then
+    echo "  WARNING: Read phase timed out after $TIMEOUT"
   fi
 
-  echo "  (log saved to $ITER_LOG)"
+  # Verify context was produced
+  if [ ! -s "$CONTEXT_FILE" ]; then
+    echo "  WARNING: Read phase produced no context, using fallback"
+    echo "# No context gathered" > "$CONTEXT_FILE"
+    echo "Read phase did not produce output. Implement based on acceptance criteria only." >> "$CONTEXT_FILE"
+  fi
+  echo "  (context: $(wc -l < "$CONTEXT_FILE") lines)"
+
+  # === PHASE 2: WRITE ===
+  echo ""
+  echo "  --- Phase 2: WRITE ($CURRENT_STORY_ID) ---"
+  WRITE_LOG="$LOG_DIR/iteration-$i-write.log"
+  set +e
+  set -o pipefail
+  run_write_phase | tee "$WRITE_LOG"
+  PHASE_EXIT=$?
+  set +o pipefail
+  set -e
+
+  if [ "$PHASE_EXIT" -eq 124 ]; then
+    echo "  WARNING: Write phase timed out after $TIMEOUT"
+  fi
+
+  # === PHASE 3: VERIFY ===
+  echo ""
+  echo "  --- Phase 3: VERIFY ($CURRENT_STORY_ID) ---"
+  VERIFY_LOG="$LOG_DIR/iteration-$i-verify.log"
+  set +e
+  set -o pipefail
+  run_verify_phase | tee "$VERIFY_LOG"
+  PHASE_EXIT=$?
+  set +o pipefail
+  set -e
+
+  if [ "$PHASE_EXIT" -eq 124 ]; then
+    echo "  WARNING: Verify phase timed out after $TIMEOUT"
+  fi
 
   # --- Contract guard ---
   if ! check_contract; then
@@ -436,7 +613,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo "  ($PASSED/$TOTAL passed)"
   echo "--------------------"
 
-  # --- Completion check: authoritative (prd.json) + secondary (<promise> tag) ---
+  # --- Completion check ---
   REMAINING=$(jq '[.userStories[] | select(.passes != true)] | length' "$PRD_FILE")
   if [ "$REMAINING" -eq 0 ]; then
     echo ""

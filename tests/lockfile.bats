@@ -6,7 +6,7 @@ load test_helper
   use_fixture "valid-prd.json"
   export MOCK_CLAUDE_BEHAVIOR="fail"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   # Lockfile should be cleaned up after exit
   [ ! -f "$RALPH_DIR/.ralph/ralph.lock" ]
@@ -20,7 +20,7 @@ load test_helper
   echo "pid=$$" > "$RALPH_DIR/.ralph/ralph.lock"
   echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$RALPH_DIR/.ralph/ralph.lock"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
   [ "$status" -eq 1 ]
   [[ "$output" == *"Another Ralph instance is running"* ]]
 }
@@ -34,7 +34,7 @@ load test_helper
   echo "pid=99999" > "$RALPH_DIR/.ralph/ralph.lock"
   echo "started=2025-01-01T00:00:00Z" >> "$RALPH_DIR/.ralph/ralph.lock"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
   # Should proceed (stale lock cleaned up), not exit 1 for lock
   [[ "$output" != *"Another Ralph instance is running"* ]]
 }

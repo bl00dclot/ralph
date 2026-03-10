@@ -7,7 +7,7 @@ load test_helper
   export MOCK_CLAUDE_BEHAVIOR="pass"
 
   # 3 stories, 1 already passed, mock passes 1 per iteration — needs 2 iterations
-  run "$RALPH_DIR/ralph.sh" --tool claude 5
+  run "$RALPH_DIR/ralph.sh" 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Ralph completed all tasks!"* ]]
 }
@@ -17,7 +17,7 @@ load test_helper
   export MOCK_CLAUDE_BEHAVIOR="promise"
 
   # Promise tag without all stories passed should NOT exit 0
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
   [ "$status" -eq 1 ]
   [[ "$output" != *"signaled completion"* ]]
 }
@@ -27,7 +27,7 @@ load test_helper
   export MOCK_CLAUDE_BEHAVIOR="fail"
 
   # All stories already pass — should complete on first iteration
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
   [ "$status" -eq 0 ]
   [[ "$output" == *"Ralph completed all tasks!"* ]]
 }
@@ -36,7 +36,7 @@ load test_helper
   use_fixture "valid-prd.json"
   export MOCK_CLAUDE_BEHAVIOR="fail"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 2
+  run "$RALPH_DIR/ralph.sh" 2
   [ "$status" -eq 1 ]
   [[ "$output" == *"reached max iterations"* ]]
 }
@@ -45,7 +45,7 @@ load test_helper
   use_fixture "valid-prd.json"
   export MOCK_CLAUDE_BEHAVIOR="pass"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 5
+  run "$RALPH_DIR/ralph.sh" 5
   [ "$status" -eq 0 ]
   [[ "$output" == *"Story Status"* ]]
   [[ "$output" == *"passed)"* ]]

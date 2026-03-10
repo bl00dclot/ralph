@@ -10,7 +10,7 @@ load test_helper
   echo "# Old progress" > "$RALPH_DIR/progress.txt"
 
   export MOCK_CLAUDE_BEHAVIOR="fail"
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   # Archive directory should exist with old files
   ARCHIVE_COUNT=$(find "$RALPH_DIR/archive" -name "prd.json" 2>/dev/null | wc -l)
@@ -26,7 +26,7 @@ load test_helper
   echo "# Current progress" > "$RALPH_DIR/progress.txt"
 
   export MOCK_CLAUDE_BEHAVIOR="fail"
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   # Should not archive
   [[ "$output" != *"Archiving previous run"* ]]
@@ -36,7 +36,7 @@ load test_helper
   use_fixture "valid-prd.json"
   export MOCK_CLAUDE_BEHAVIOR="fail"
 
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   [ -f "$RALPH_DIR/.last-branch" ]
   BRANCH=$(cat "$RALPH_DIR/.last-branch")
@@ -52,7 +52,7 @@ load test_helper
   echo "iteration 1 log" > "$RALPH_DIR/logs/iteration-1.log"
 
   export MOCK_CLAUDE_BEHAVIOR="fail"
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   # Check logs were archived
   ARCHIVE_FOLDER=$(find "$RALPH_DIR/archive" -mindepth 1 -maxdepth 1 -type d | head -1)
@@ -68,7 +68,7 @@ load test_helper
   echo "# Old detailed progress with lots of info" > "$RALPH_DIR/progress.txt"
 
   export MOCK_CLAUDE_BEHAVIOR="fail"
-  run "$RALPH_DIR/ralph.sh" --tool claude 1
+  run "$RALPH_DIR/ralph.sh" 1
 
   # Progress file should be fresh (not contain old content)
   ! grep -q "Old detailed progress" "$RALPH_DIR/progress.txt"
