@@ -1,71 +1,83 @@
 # Ralph
 
-Autonomous AI agent loop runner. Spawns fresh AI coding tool instances (Claude Code or Amp) in a loop, working through a PRD's user stories one at a time until everything passes.
+Autonomous AI agent loop runner with 3-phase iterations. Spawns fresh Claude Code instances in a **Read → Write → Verify** cycle, working through a PRD's user stories one at a time until everything passes.
 
 Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/). Forked from [snarktank/ralph](https://github.com/snarktank/ralph).
 
 ## How It Works
 
-Ralph reads a `prd.json` file containing user stories, then runs your AI coding tool in a loop. Each iteration:
+Ralph lives in your project's `scripts/ralph/` directory. It reads `prd.json` containing user stories, then runs three specialized AI phases per iteration:
 
-1. Spawns a **fresh AI instance** with no memory of previous runs
-2. Feeds it `CLAUDE.md` (the system prompt) which tells it to read `prd.json`
-3. The AI picks the highest-priority incomplete story and implements it
-4. The AI commits code and marks the story as `passes: true` in `prd.json`
-5. Ralph checks `prd.json` - if all stories pass, it exits. Otherwise, loop again.
+1. **Read Phase** — Surveys the codebase using [Serena](https://github.com/serena-ai/serena-mcp) semantic tools. Produces a structured context document (relevant files, key symbols, code snippets, implementation notes).
+2. **Write Phase** — Receives the context from the read phase and implements the next story. Only has access to Edit, Write, and Bash (for git). Cannot read files or run tests.
+3. **Verify Phase** — Independently checks acceptance criteria by running tests, typecheck, and inspecting code via Serena. Updates `prd.json` and `progress.txt`.
 
 Memory between iterations persists only through:
 - **Git history** (commits from previous iterations)
-- **`progress.txt`** (learnings and context the AI appends)
+- **`progress.txt`** (learnings the verify phase appends)
 - **`prd.json`** (which stories are done)
 
 ```
-┌─────────────────────────────────────────────┐
-│  ralph.sh                                    │
-│                                              │
-│  for i in 1..N:                              │
-│    ┌──────────────────────────────────────┐  │
-│    │  Fresh AI Instance                   │  │
-│    │                                      │  │
-│    │  1. Read prd.json                    │  │
-│    │  2. Read progress.txt                │  │
-│    │  3. Pick next story (by priority)    │  │
-│    │  4. Implement it                     │  │
-│    │  5. Run quality checks               │  │
-│    │  6. Commit                           │  │
-│    │  7. Mark story passes: true          │  │
-│    │  8. Append learnings to progress.txt │  │
-│    └──────────────────────────────────────┘  │
-│                                              │
-│    All stories passed? → exit 0              │
-│    Same story failed 3x? → exit 2 (stuck)   │
-│    Max iterations? → exit 1                  │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────┐
+│  ralph.sh                                          │
+│                                                    │
+│  for i in 1..N:                                    │
+│    snapshot prd.json                                │
+│    extract next incomplete story                    │
+│                                                    │
+│    ┌──────────────────────────────────────────┐    │
+│    │  READ PHASE (Serena + Read tools)        │    │
+│    │  → Surveys codebase, outputs context.md  │    │
+│    └──────────────────────────────────────────┘    │
+│                     ↓                              │
+│    ┌──────────────────────────────────────────┐    │
+│    │  WRITE PHASE (Edit + Write + Bash only)  │    │
+│    │  → Implements story, commits code         │    │
+│    └──────────────────────────────────────────┘    │
+│                     ↓                              │
+│    ┌──────────────────────────────────────────┐    │
+│    │  VERIFY PHASE (Serena + Bash + Read)     │    │
+│    │  → Runs tests, updates prd.json/progress │    │
+│    └──────────────────────────────────────────┘    │
+│                                                    │
+│    Contract guard: diff snapshot vs prd.json       │
+│    Stuck detection: same story fails 3x → exit 2  │
+│    All stories passed? → exit 0                    │
+│    Max iterations? → exit 1                        │
+└───────────────────────────────────────────────────┘
 ```
+
+### Why 3 Phases?
+
+- **Token savings** — The write phase doesn't waste tokens on codebase exploration; it gets pre-digested context
+- **Separation of concerns** — The AI that writes code cannot mark its own work as passed
+- **Tool restriction** — Each phase only has the tools it needs, preventing accidental side effects
 
 ## Prerequisites
 
-- **AI coding tool** (one of):
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
-  - [Amp CLI](https://ampcode.com)
-- **jq** - JSON processor (`sudo apt install jq` / `brew install jq`)
-- **Git** - project must be a git repository
-- **Node.js** - only needed for running tests
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
+- [Serena MCP](https://github.com/serena-ai/serena-mcp) (`uvx --from serena-mcp serena` — installed automatically via MCP config)
+- **jq** — JSON processor (`sudo apt install jq` / `brew install jq`)
+- **Git** — project must be a git repository
+- **Node.js** — only needed for running tests
 
 ## Setup
 
-### 1. Clone and install
+### 1. Add Ralph to your project
+
+Ralph should live in `scripts/ralph/` within your project:
 
 ```bash
-git clone https://github.com/snarktank/ralph.git
-cd ralph
+# From your project root
+git clone https://github.com/snarktank/ralph.git scripts/ralph
+cd scripts/ralph
 npm install  # Only needed for tests (installs bats)
 chmod +x ralph.sh
 ```
 
-### 2. Install Claude Code skills (required for Claude Code users)
+### 2. Install Claude Code skills (optional)
 
-Ralph uses two Claude Code skills that let you generate PRDs and convert them to `prd.json` interactively. There are three ways to install them:
+Ralph uses two Claude Code skills for generating PRDs interactively:
 
 #### Option A: Claude Code Marketplace (recommended)
 
@@ -76,44 +88,26 @@ Ralph uses two Claude Code skills that let you generate PRDs and convert them to
 ```
 
 This installs:
-- `/prd` - Generate Product Requirements Documents with guided questions
-- `/ralph` - Convert PRDs to `prd.json` format for autonomous execution
+- `/prd` — Generate Product Requirements Documents with guided questions
+- `/ralph` — Convert PRDs to `prd.json` format for autonomous execution
 
 #### Option B: Copy skills manually
 
 ```bash
-# Copy to your Claude Code skills directory
-cp -r skills/prd ~/.claude/skills/
-cp -r skills/ralph ~/.claude/skills/
+cp -r scripts/ralph/skills/prd ~/.claude/skills/
+cp -r scripts/ralph/skills/ralph ~/.claude/skills/
 ```
 
 #### Option C: No skills (manual prd.json)
 
-You can skip skills entirely and write `prd.json` by hand. See [PRD Format](#prd-format) below.
+Skip skills entirely and write `prd.json` by hand. See [PRD Format](#prd-format) below.
 
-### 3. Install the Ralph Loop plugin (optional)
+### 3. Create a CLAUDE.md prompt
 
-There's also an official Anthropic plugin that runs Ralph **inside** a Claude Code session (instead of as a standalone bash script):
-
-```bash
-# In Claude Code:
-/plugin install ralph-loop@claude-plugins-official
-```
-
-This gives you:
-- `/ralph-loop` - Start an in-session Ralph loop with a prompt
-- `/cancel-ralph` - Cancel an active loop
-
-The in-session loop works differently from `ralph.sh`: it uses Claude Code's stop hook to feed the same prompt back after each response, creating a self-referential loop within a single session.
-
-### 4. Create a CLAUDE.md prompt
-
-Ralph pipes `CLAUDE.md` into the AI tool as its system prompt. This file tells the AI how to read the PRD, implement stories, and report progress.
-
-The `prompt.md` file in this repo is the template. Copy and customize it for your project:
+Ralph pipes `CLAUDE.md` into the AI as its system prompt. Copy and customize the template:
 
 ```bash
-cp prompt.md CLAUDE.md
+cp scripts/ralph/prompt.md scripts/ralph/CLAUDE.md
 ```
 
 Edit `CLAUDE.md` to add:
@@ -121,43 +115,39 @@ Edit `CLAUDE.md` to add:
 - Codebase conventions and patterns
 - Stack-specific gotchas
 
+### 4. Configure Serena (automatic)
+
+Ralph includes a `serena-mcp.json` template that configures the Serena MCP server. At runtime, Ralph substitutes `{{PROJECT_ROOT}}` with your project's git root and writes the config to `.ralph/serena-mcp.json`. No manual setup needed.
+
+If the Serena template is missing, phases run without semantic analysis (degraded mode with a warning).
+
 ## Usage
 
-### Step 1: Create a PRD
+### Step 1: Prepare a specification
+
+Write your feature specification in `docs/plans/` (your project's docs directory). Refine it until it's strong enough, then convert it to Ralph's format.
+
+### Step 2: Create prd.json
 
 Using the skill (if installed):
 
 ```
 # In Claude Code:
-/prd Add priority levels to tasks
+/ralph Convert docs/plans/my-feature-spec.md to prd.json
 ```
 
-The skill asks 3-5 clarifying questions, then generates a markdown PRD at `tasks/prd-[feature-name].md`.
-
-Or write one manually in markdown.
-
-### Step 2: Convert to prd.json
-
-Using the skill:
-
-```
-# In Claude Code:
-/ralph Convert tasks/prd-task-priority.md to prd.json
-```
-
-Or create `prd.json` manually (see format below).
+Or create `scripts/ralph/prd.json` manually (see format below).
 
 ### Step 3: Run Ralph
 
 ```bash
-# Using Claude Code (recommended)
-./ralph.sh --tool claude
+cd scripts/ralph
 
-# Using Amp
-./ralph.sh --tool amp
+# Basic run (default: 10 iterations, 30m timeout per phase)
+./ralph.sh
 
 # With options
-./ralph.sh --tool claude --timeout 1h --notify 20
+./ralph.sh --timeout 1h --notify 20
 ```
 
 ### CLI Options
@@ -165,12 +155,13 @@ Or create `prd.json` manually (see format below).
 ```
 Usage: ralph.sh [OPTIONS] [max_iterations]
 
+3-phase autonomous AI agent loop (Read → Write → Verify).
+
 Options:
-  --tool amp|claude   AI backend to use (default: amp)
-  --timeout DURATION  Max time per iteration (default: 30m)
-  --dry-run           Show story status and exit without running
+  --timeout DURATION  Max time per phase (default: 30m)
+  --dry-run           Show next story and exit without running
   --notify            Send desktop notification on completion
-  --help              Show help
+  --help              Show this help
 
 Arguments:
   max_iterations      Maximum loop iterations (default: 10)
@@ -198,7 +189,7 @@ Dry run — current status:
 
 ## PRD Format
 
-`prd.json` is the contract between you and Ralph. Here's the schema:
+`prd.json` is the contract between you and Ralph. Place it at `scripts/ralph/prd.json`.
 
 ```json
 {
@@ -258,7 +249,6 @@ See `prd.json.example` for a full example.
 - Good: "Filter dropdown has options: All, Active, Completed"
 - Bad: "Works correctly"
 - Always include: `"Typecheck passes"`
-- For UI stories, include: `"Verify in browser using dev-browser skill"`
 
 ## Data Precision Guard
 
@@ -286,22 +276,22 @@ Ralph guards `prd.json` against AI format drift. Each iteration, Ralph snapshots
 - **Lockfile** (`.ralph/ralph.lock`) prevents concurrent Ralph instances
 - **Schema validation** at startup checks field names and types
 - **CLAUDE.md existence** validated before running
+- **Prompt templates** validated at startup (read-phase.md, write-phase.md, verify-phase.md)
 - **Single completion path** — only `prd.json` all-passed triggers completion (no promise tags)
-
-### Runtime directory
-
-`.ralph/` holds runtime state (gitignored):
-- `snapshot.json` — prd.json copy from before current iteration
-- `ralph.lock` — lockfile with PID
 
 ## Project Structure
 
 ```
-ralph/
+scripts/ralph/
 ├── ralph.sh                 # Main loop runner (bash)
 ├── prompt.md                # Prompt template (copy to CLAUDE.md)
 ├── prd.json.example         # Example PRD format
+├── serena-mcp.json          # Serena MCP config template
 ├── package.json             # Dev dependencies (bats for testing)
+├── prompts/                 # Phase prompt templates
+│   ├── read-phase.md        # Read phase instructions
+│   ├── write-phase.md       # Write phase instructions
+│   └── verify-phase.md      # Verify phase instructions
 ├── .claude/
 │   └── settings.local.json  # Claude Code permissions
 ├── docs/
@@ -315,19 +305,25 @@ ralph/
 │   ├── timeout.bats
 │   ├── stuck_detection.bats
 │   ├── archive.bats
-│   ├── lockfile.bats         # Concurrent execution tests
-│   ├── guard.bats            # Contract violation tests
-│   ├── fixtures/             # Test PRD files
-│   └── mocks/                # Mock claude/amp binaries
+│   ├── lockfile.bats        # Concurrent execution tests
+│   ├── guard.bats           # Contract violation tests
+│   ├── phases.bats          # 3-phase architecture tests
+│   ├── fixtures/            # Test PRD files
+│   └── mocks/               # Mock claude binary
 │
 │  Generated at runtime:
 ├── CLAUDE.md                # System prompt (you create from prompt.md)
 ├── prd.json                 # Current PRD (you create or /ralph generates)
 ├── progress.txt             # Append-only progress log
-├── logs/                    # Per-iteration output logs
-│   └── iteration-N.log
+├── logs/                    # Per-phase iteration logs
+│   ├── iteration-N-read.log
+│   ├── iteration-N-write.log
+│   └── iteration-N-verify.log
 ├── .ralph/                  # Runtime state (gitignored)
 │   ├── snapshot.json        # Pre-iteration prd.json backup
+│   ├── context.md           # Read phase output (fed to write phase)
+│   ├── current-story.json   # Current story being worked on
+│   ├── serena-mcp.json      # Rendered Serena config
 │   └── ralph.lock           # Lockfile
 ├── archive/                 # Archived previous runs
 │   └── YYYY-MM-DD-branch/
@@ -336,33 +332,35 @@ ralph/
 
 ## How ralph.sh Works Internally
 
-Here's what happens when you run it:
-
-### 1. Argument Parsing
-Parses `--tool`, `--timeout`, `--dry-run`, `--notify`, and positional `max_iterations`. Supports both `--flag value` and `--flag=value` syntax.
-
-### 2. Preflight Checks
+### 1. Preflight Checks
 - Validates `prd.json` exists and is valid JSON
 - Checks for `branchName` field and non-empty `userStories`
 - **Schema validation** — every story must have correct field names and types
 - Validates `CLAUDE.md` exists
+- Validates prompt templates exist (`prompts/read-phase.md`, `write-phase.md`, `verify-phase.md`)
 - Warns (doesn't block) on dirty working tree
 
-### 3. Lockfile
+### 2. Lockfile
 Creates `.ralph/ralph.lock` with PID. If another Ralph is already running, exits. Stale locks from dead processes are cleaned up automatically. Trap ensures cleanup on exit.
 
-### 4. Branch Archiving
+### 3. Branch Archiving
 If the `branchName` in `prd.json` differs from `.last-branch`, Ralph archives the previous run's `prd.json`, `progress.txt`, `CLAUDE.md`, and `logs/` to `archive/YYYY-MM-DD-branchname/`.
 
+### 4. Serena Config
+Reads `serena-mcp.json` template, substitutes `{{PROJECT_ROOT}}` with the git root of the project, writes rendered config to `.ralph/serena-mcp.json`. If the template is missing, phases run without Serena (warning emitted).
+
 ### 5. Main Loop
+
 For each iteration:
-- **Snapshot** `prd.json` to `.ralph/snapshot.json`
-- Run the AI tool with `CLAUDE.md` piped via stdin
-- `timeout` enforces per-iteration time limit
-- Output piped through `tee` for live display + log file
-- **Contract guard:** diff snapshot vs current prd.json (see [Data Precision Guard](#data-precision-guard))
-- **Stuck detection:** same story fails 3 consecutive iterations → exit 2
-- **Completion check:** all stories `passes: true` → exit 0
+
+1. **Snapshot** `prd.json` to `.ralph/snapshot.json`
+2. **Extract story** — finds the next incomplete story (lowest priority with `passes: false`), writes to `.ralph/current-story.json`
+3. **Read phase** — Serena + Read tools survey the codebase. Output captured to `.ralph/context.md` and logged to `logs/iteration-N-read.log`
+4. **Write phase** — Edit + Write + Bash only. Receives CLAUDE.md + write prompt + context.md via stdin. Logged to `logs/iteration-N-write.log`
+5. **Verify phase** — Serena + Bash + Read + Edit. Runs tests, updates `prd.json` passes field and `progress.txt`. Logged to `logs/iteration-N-verify.log`
+6. **Contract guard** — diffs snapshot vs current `prd.json` (see [Data Precision Guard](#data-precision-guard))
+7. **Stuck detection** — same story fails 3 consecutive iterations → exit 2
+8. **Completion check** — all stories `passes: true` → exit 0
 
 ### 6. Exit Codes
 
@@ -382,8 +380,13 @@ jq '.userStories[] | {id, title, passes}' prd.json
 # Read progress/learnings
 cat progress.txt
 
-# Check iteration logs
-cat logs/iteration-1.log
+# Check phase logs for iteration 1
+cat logs/iteration-1-read.log
+cat logs/iteration-1-write.log
+cat logs/iteration-1-verify.log
+
+# See context the read phase produced
+cat .ralph/context.md
 
 # See git history from Ralph
 git log --oneline -10
@@ -401,11 +404,11 @@ npm test              # Run all tests
 npm run test:verbose  # Verbose output
 ```
 
-Test suites cover: preflight validation, schema validation, argument parsing, completion logic, dry run, logging, timeout handling, stuck detection, archiving, lockfile, and contract guard.
+Test suites cover: preflight validation, schema validation, argument parsing, completion logic, dry run, logging, timeout handling, stuck detection, archiving, lockfile, contract guard, and 3-phase architecture.
 
 ## References
 
 - [Geoffrey Huntley's Ralph article](https://ghuntley.com/ralph/)
-- [snarktank/ralph](https://github.com/snarktank/ralph) - Original repository
+- [snarktank/ralph](https://github.com/snarktank/ralph) — Original repository
 - [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)
-- [Amp docs](https://ampcode.com/manual)
+- [Serena MCP](https://github.com/serena-ai/serena-mcp) — Semantic code analysis server
