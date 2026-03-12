@@ -8,9 +8,9 @@ Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/). Forked
 
 Ralph lives in your project's `scripts/ralph/` directory. It reads `prd.json` containing user stories, then runs three specialized AI phases per iteration:
 
-1. **Read Phase** — Surveys the codebase using [Serena](https://github.com/serena-ai/serena-mcp) semantic tools. Produces a structured context document (relevant files, key symbols, code snippets, implementation notes).
-2. **Write Phase** — Receives the context from the read phase and implements the next story. Has Read, Edit, Write, and Bash (for git). Can read files for verification but has no Serena exploration tools — relies on pre-digested context for architecture decisions.
-3. **Verify Phase** — Independently checks acceptance criteria by running tests, typecheck, and inspecting code via Serena. Updates `prd.json` and `progress.txt`.
+1. **Read Phase** (`claude-sonnet-4-6`) — Surveys the codebase using [Serena](https://github.com/serena-ai/serena-mcp) semantic tools. Produces a structured context document (relevant files, key symbols, code snippets, implementation notes).
+2. **Write Phase** (`claude-opus-4-6`) — Receives the context from the read phase and implements the next story. Has Read, Edit, Write, and Bash (for git). Can read files for verification but has no Serena exploration tools — relies on pre-digested context for architecture decisions.
+3. **Verify Phase** (`claude-sonnet-4-6`) — Independently checks acceptance criteria by running tests, typecheck, and inspecting code via Serena. Updates `prd.json` and `progress.txt`.
 
 Memory between iterations persists only through:
 - **Git history** (commits from previous iterations)
@@ -355,9 +355,9 @@ For each iteration:
 
 1. **Snapshot** `prd.json` to `.ralph/snapshot.json`
 2. **Extract story** — finds the next incomplete story (lowest priority with `passes: false`), writes to `.ralph/current-story.json`
-3. **Read phase** — Serena + Read tools survey the codebase. Output captured to `.ralph/context.md` and logged to `logs/iteration-N-read.log`
-4. **Write phase** — Read + Edit + Write + Bash (no Serena). Receives CLAUDE.md + write prompt + context.md via stdin. Logged to `logs/iteration-N-write.log`
-5. **Verify phase** — Serena + Bash + Read + Edit. Runs tests, updates `prd.json` passes field and `progress.txt`. Logged to `logs/iteration-N-verify.log`
+3. **Read phase** (`claude-sonnet-4-6`) — Serena + Read tools survey the codebase. Output captured to `.ralph/context.md` and logged to `logs/iteration-N-read.log`
+4. **Write phase** (`claude-opus-4-6`) — Read + Edit + Write + Bash (no Serena). Receives CLAUDE.md + write prompt + context.md via stdin. Logged to `logs/iteration-N-write.log`
+5. **Verify phase** (`claude-sonnet-4-6`) — Serena + Bash + Read + Edit. Runs tests, updates `prd.json` passes field and `progress.txt`. Logged to `logs/iteration-N-verify.log`
 6. **Contract guard** — diffs snapshot vs current `prd.json` (see [Data Precision Guard](#data-precision-guard))
 7. **Stuck detection** — same story fails 3 consecutive iterations → exit 2
 8. **Completion check** — all stories `passes: true` → exit 0

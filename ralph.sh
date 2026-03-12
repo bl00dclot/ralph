@@ -334,6 +334,7 @@ run_read_phase() {
   echo "$prompt" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
+    --model claude-sonnet-4-6 \
     --allowed-tools "Read $SERENA_READ_TOOLS" \
     $serena_args \
     2>&1
@@ -354,6 +355,7 @@ $phase_prompt"
   echo "$combined" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
+    --model claude-opus-4-6 \
     --allowed-tools "Read Edit Write Bash" \
     2>&1
 }
@@ -370,6 +372,7 @@ run_verify_phase() {
   echo "$prompt" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
+    --model claude-sonnet-4-6 \
     --allowed-tools "Bash Read Edit Write $SERENA_READ_TOOLS" \
     $serena_args \
     2>&1
