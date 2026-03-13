@@ -30,22 +30,30 @@ Before anything else:
 
 ### 2. `ralph.sh` — allowed tools
 
-Add to `SERENA_READ_TOOLS`:
+Add to `SERENA_READ_TOOLS` (this variable is used by both `run_read_phase` and `run_verify_phase`, so adding here covers both phases):
 - `mcp__plugin_serena_serena__activate_project`
 - `mcp__plugin_serena_serena__get_current_config`
 
 ### 3. `ralph.sh` — `check_serena_init` function
+
+The sentinel line is greppable from `$log_file` in both phases. For the read phase, `run_phase_with_retry` pipes output through `tee "$log_file" > "$output_file"`, so both the log and the context file receive all output including the sentinel.
+
+The function compares the reported project root against `$PROJECT_ROOT` (the expected target). A mismatch prints a warning but does not abort — the run continues, surfacing the misconfiguration visibly without halting work.
 
 ```bash
 check_serena_init() {
   local phase_name="$1"
   local log_file="$2"
   local match
-  match=$(grep -o '\[SERENA_INIT: [^]]*\]' "$log_file" | head -1)
+  match=$(grep -oP '\[SERENA_INIT: [^\]]+\]' "$log_file" | head -1)
   if [ -n "$match" ]; then
-    local project_root="${match#\[SERENA_INIT: }"
-    project_root="${project_root%\]}"
-    echo "  Serena: active on $project_root ✓"
+    local reported_root="${match#\[SERENA_INIT: }"
+    reported_root="${reported_root%\]}"
+    if [ "$reported_root" = "$PROJECT_ROOT" ]; then
+      echo "  Serena: active on $reported_root ✓"
+    else
+      echo "  WARNING: Serena active on $reported_root (expected $PROJECT_ROOT)"
+    fi
   else
     echo "  WARNING: Serena initiation not confirmed in $phase_name phase"
   fi
@@ -54,14 +62,16 @@ check_serena_init() {
 
 ### 4. `ralph.sh` — main loop
 
-Call `check_serena_init` after read and verify phase completion:
+`check_serena_init` is only called when `SERENA_AVAILABLE=true`. When Serena is unavailable, the check is skipped entirely (no spurious warnings). The call is placed immediately after `run_phase_with_retry`, before the context line-count echo for read, and before the contract check for verify:
 
 ```bash
 # After run_phase_with_retry "read" ...
-check_serena_init "read" "$READ_LOG"
+[ "$SERENA_AVAILABLE" = "true" ] && check_serena_init "read" "$READ_LOG"
+echo "  (context: $(wc -l < "$CONTEXT_FILE") lines)"
 
 # After run_phase_with_retry "verify" ...
-check_serena_init "verify" "$VERIFY_LOG"
+[ "$SERENA_AVAILABLE" = "true" ] && check_serena_init "verify" "$VERIFY_LOG"
+# then contract check follows
 ```
 
 ## Output Example
