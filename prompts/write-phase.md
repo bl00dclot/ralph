@@ -10,6 +10,10 @@ Implement the user story below. Pre-digested context is provided; you also have 
 
 {{CONTEXT_BLOCK}}
 
+## Previous Verify Feedback
+
+{{VERIFY_FEEDBACK}}
+
 ## Instructions
 
 1. Implement the acceptance criteria based on the context provided above

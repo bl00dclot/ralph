@@ -238,7 +238,7 @@ build_phase_prompt() {
   result="${result//\{\{PRD_FILE\}\}/$PRD_FILE}"
   result="${result//\{\{PROGRESS_FILE\}\}/$PROGRESS_FILE}"
 
-  # For write phase: inject context
+  # For write phase: inject context and verify feedback
   if [ "$template_file" = "write-phase.md" ]; then
     local context=""
     if [ -f "$CONTEXT_FILE" ]; then
@@ -247,6 +247,12 @@ build_phase_prompt() {
       context="No context available from read phase."
     fi
     result="${result//\{\{CONTEXT_BLOCK\}\}/$context}"
+
+    local feedback=""
+    if [ -f "$VERIFY_FEEDBACK_FILE" ]; then
+      feedback=$(cat "$VERIFY_FEEDBACK_FILE")
+    fi
+    result="${result//\{\{VERIFY_FEEDBACK\}\}/$feedback}"
   fi
 
   echo "$result"
@@ -598,20 +604,29 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   fi
   echo "  Story: $CURRENT_STORY_ID - $CURRENT_STORY_TITLE"
 
-  # === PHASE 1: READ ===
-  echo ""
-  echo "  --- Phase 1: READ ($CURRENT_STORY_ID) ---"
-  READ_LOG="$LOG_DIR/iteration-$i-read.log"
-  rm -f "$CONTEXT_FILE"
-  run_phase_with_retry "read" "$READ_LOG" "$CONTEXT_FILE"
+  VERIFY_FEEDBACK_FILE="$RALPH_STATE_DIR/verify-feedback.md"
 
-  # Verify context was produced
-  if [ ! -s "$CONTEXT_FILE" ]; then
-    echo "  WARNING: Read phase produced no context, using fallback"
-    echo "# No context gathered" > "$CONTEXT_FILE"
-    echo "Read phase did not produce output. Implement based on acceptance criteria only." >> "$CONTEXT_FILE"
+  # === PHASE 1: READ (skip if retrying same story with feedback) ===
+  READ_LOG="$LOG_DIR/iteration-$i-read.log"
+  if [ -f "$VERIFY_FEEDBACK_FILE" ] && [ "$CURRENT_STORY_ID" = "$STUCK_STORY" ]; then
+    echo ""
+    echo "  --- Phase 1: READ ($CURRENT_STORY_ID) --- SKIPPED (reusing context + verify feedback)"
+    echo "Reusing context from previous iteration. Verify feedback injected into write phase." > "$READ_LOG"
+  else
+    echo ""
+    echo "  --- Phase 1: READ ($CURRENT_STORY_ID) ---"
+    rm -f "$CONTEXT_FILE"
+    rm -f "$VERIFY_FEEDBACK_FILE"
+    run_phase_with_retry "read" "$READ_LOG" "$CONTEXT_FILE"
+
+    # Verify context was produced
+    if [ ! -s "$CONTEXT_FILE" ]; then
+      echo "  WARNING: Read phase produced no context, using fallback"
+      echo "# No context gathered" > "$CONTEXT_FILE"
+      echo "Read phase did not produce output. Implement based on acceptance criteria only." >> "$CONTEXT_FILE"
+    fi
+    echo "  (context: $(wc -l < "$CONTEXT_FILE") lines)"
   fi
-  echo "  (context: $(wc -l < "$CONTEXT_FILE") lines)"
 
   # === PHASE 2: WRITE ===
   echo ""
@@ -631,8 +646,16 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     exit 3
   fi
 
-  # --- Stuck detection ---
+  # --- Save verify feedback for next iteration if story still incomplete ---
   NEXT_INCOMPLETE=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$PRD_FILE")
+  if [ "$NEXT_INCOMPLETE" = "$CURRENT_STORY_ID" ] && [ -f "$VERIFY_LOG" ]; then
+    cp "$VERIFY_LOG" "$VERIFY_FEEDBACK_FILE"
+    echo "  (verify feedback saved for next iteration)"
+  else
+    rm -f "$VERIFY_FEEDBACK_FILE"
+  fi
+
+  # --- Stuck detection ---
   if [ -n "$NEXT_INCOMPLETE" ]; then
     if [ "$NEXT_INCOMPLETE" = "$STUCK_STORY" ]; then
       STUCK_COUNT=$((STUCK_COUNT + 1))
@@ -643,7 +666,12 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     if [ "$STUCK_COUNT" -ge "$MAX_STUCK" ]; then
       echo ""
       echo "STUCK: $STUCK_STORY failed $MAX_STUCK consecutive iterations. Aborting."
-      echo "Check $LOG_DIR/ and $PROGRESS_FILE for details."
+      echo ""
+      echo "--- Last verify phase output ---"
+      tail -n 30 "$VERIFY_LOG" 2>/dev/null || echo "(no verify log found)"
+      echo "--- End verify output ---"
+      echo ""
+      echo "Full logs: $LOG_DIR/"
       notify "Ralph STUCK" "$STUCK_STORY failed $MAX_STUCK times"
       exit 2
     fi
@@ -674,6 +702,12 @@ done
 
 echo ""
 echo "Ralph reached max iterations ($MAX_ITERATIONS) without completing all tasks."
-echo "Check $PROGRESS_FILE for status."
+echo ""
+echo "--- Last verify phase output ---"
+LAST_VERIFY="$LOG_DIR/iteration-$MAX_ITERATIONS-verify.log"
+tail -n 30 "$LAST_VERIFY" 2>/dev/null || echo "(no verify log found)"
+echo "--- End verify output ---"
+echo ""
+echo "Full logs: $LOG_DIR/"
 notify "Ralph FAILED" "Reached $MAX_ITERATIONS iterations without completing"
 exit 1
