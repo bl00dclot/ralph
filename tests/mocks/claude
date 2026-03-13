@@ -1,186 +1,147 @@
 #!/bin/bash
-# Mock claude CLI — phase-aware for 3-phase Ralph
-# Detects phase from --allowed-tools argument
-# MOCK_CLAUDE_BEHAVIOR controls verify phase: pass, fail, mutate, multi-pass, revert, corrupt, promise, ratelimit
+# Mock claude CLI for testing ralph.sh
+# Behavior controlled by MOCK_CLAUDE_BEHAVIOR env var
+# Phase detected via --allowed-tools argument
 
-# Consume stdin
 cat > /dev/null
 
-# Detect phase from --allowed-tools
-PHASE="unknown"
 ALLOWED_TOOLS=""
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --allowed-tools)
-      ALLOWED_TOOLS="$2"
-      shift 2
-      ;;
-    --print|--dangerously-skip-permissions|--strict-mcp-config)
-      shift
-      ;;
-    --mcp-config)
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
+    --allowed-tools) ALLOWED_TOOLS="$2"; shift 2 ;;
+    *) shift ;;
   esac
 done
 
-# Determine phase based on allowed tools
+BEHAVIOR="${MOCK_CLAUDE_BEHAVIOR:-fail}"
+
+# --- Rate limit handling (before phase detection) ---
+if [[ "$BEHAVIOR" == "ratelimit" ]]; then
+  COUNTER_FILE="$MOCK_RATELIMIT_COUNTER"
+  COUNT=0
+  [ -f "$COUNTER_FILE" ] && COUNT=$(cat "$COUNTER_FILE")
+  COUNT=$((COUNT + 1))
+  echo "$COUNT" > "$COUNTER_FILE"
+  if [ "$COUNT" -le "${MOCK_RATELIMIT_FAIL_COUNT:-1}" ]; then
+    echo "Error: 429 Too Many Requests - rate limit exceeded"
+    exit 1
+  fi
+  BEHAVIOR="${MOCK_RATELIMIT_THEN:-fail}"
+fi
+
+# --- Hang behavior (for timeout testing) ---
+if [[ "$BEHAVIOR" == "hang" ]]; then
+  sleep 3600
+  exit 0
+fi
+
+# --- Phase detection ---
 if [[ "$ALLOWED_TOOLS" == *"mcp__plugin_serena"* ]] && [[ "$ALLOWED_TOOLS" != *"Edit"* ]]; then
   PHASE="read"
 elif [[ "$ALLOWED_TOOLS" == *"Edit Write Bash"* ]] && [[ "$ALLOWED_TOOLS" != *"mcp__plugin_serena"* ]]; then
   PHASE="write"
 elif [[ "$ALLOWED_TOOLS" == *"Edit"* ]] && [[ "$ALLOWED_TOOLS" == *"mcp__plugin_serena"* ]]; then
   PHASE="verify"
+else
+  PHASE="unknown"
 fi
 
-BEHAVIOR="${MOCK_CLAUDE_BEHAVIOR:-fail}"
+# --- Helper: project root for serena_init ---
+ACTUAL_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/unknown")"
 
-# Rate limit simulation: first N calls fail with rate limit error, then succeed
-if [ "$BEHAVIOR" = "ratelimit" ]; then
-  COUNTER_FILE="${MOCK_RATELIMIT_COUNTER:-/tmp/ralph-ratelimit-count}"
-  COUNT=0
-  if [ -f "$COUNTER_FILE" ]; then
-    COUNT=$(cat "$COUNTER_FILE")
+# --- Helper: pass the next incomplete story ---
+pass_next_story() {
+  if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+    NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+    if [ -n "$NEXT_ID" ]; then
+      jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+      mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+      echo "Verified $NEXT_ID: all criteria passed."
+    fi
   fi
-  COUNT=$((COUNT + 1))
-  echo "$COUNT" > "$COUNTER_FILE"
+}
 
-  RATELIMIT_FAIL_COUNT="${MOCK_RATELIMIT_FAIL_COUNT:-2}"
-  if [ "$COUNT" -le "$RATELIMIT_FAIL_COUNT" ]; then
-    echo "Error: rate limit exceeded. Please wait before trying again."
-    exit 1
-  fi
-  # Rate limit cleared — fall through with the "then" behavior
-  BEHAVIOR="${MOCK_RATELIMIT_THEN:-pass}"
-fi
-
+# --- Output based on phase + behavior ---
 case "$PHASE" in
   read)
-    # Output context to stdout (ralph.sh captures this as context.md)
-    # Compute actual project root the same way ralph.sh does
-    ACTUAL_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/unknown")"
+    # Emit serena sentinel if requested
     case "$BEHAVIOR" in
-      serena_init_match)
-        echo "[SERENA_INIT: $ACTUAL_ROOT]"
-        ;;
-      serena_init_mismatch)
-        echo "[SERENA_INIT: /wrong/path]"
-        ;;
+      serena_init_match)    echo "[SERENA_INIT: $ACTUAL_ROOT]" ;;
+      serena_init_mismatch) echo "[SERENA_INIT: /wrong/path]" ;;
     esac
-    echo "### Relevant Files"
-    echo "- src/main.ts: Main entry point"
-    echo ""
-    echo "### Key Symbols"
-    echo "- function main(): entry point"
-    echo ""
-    echo "### Code Snippets"
-    echo "No specific snippets needed."
-    echo ""
-    echo "### Implementation Notes"
-    echo "Follow existing patterns."
+    # Emit context — either verbose (MOCK_READ_LINES) or structured default
+    if [ -n "$MOCK_READ_LINES" ] && [ "$MOCK_READ_LINES" -gt 0 ]; then
+      for i in $(seq 1 "$MOCK_READ_LINES"); do
+        echo "- symbol_$i: /src/file_$i.ts line $i"
+      done
+    else
+      echo "### Relevant Files"
+      echo "- src/main.ts: Main entry point"
+      echo ""
+      echo "### Key Symbols"
+      echo "- function main(): entry point"
+      echo ""
+      echo "### Code Snippets"
+      echo "No specific snippets needed."
+      echo ""
+      echo "### Implementation Notes"
+      echo "Follow existing patterns."
+    fi
     ;;
+
   write)
-    echo "Ralph write phase: implementing changes for story..."
-    echo "Changes committed."
+    echo "Write phase output"
     ;;
+
   verify)
     case "$BEHAVIOR" in
       pass)
         echo "Ralph verify phase: checking acceptance criteria..."
-        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-          if [ -n "$NEXT_ID" ]; then
-            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-            echo "Verified $NEXT_ID: all criteria passed."
-          fi
-        fi
+        pass_next_story
         ;;
-      fail)
+      serena_init_match)
+        echo "[SERENA_INIT: $ACTUAL_ROOT]"
         echo "Ralph verify phase: checking acceptance criteria..."
+        pass_next_story
+        ;;
+      serena_init_mismatch)
+        echo "[SERENA_INIT: /wrong/path]"
         echo "Verification failed: criteria not met."
         ;;
       mutate)
-        echo "Ralph verify phase: checking..."
         if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-          if [ -n "$NEXT_ID" ]; then
-            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).title = "MUTATED TITLE" | (.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-          fi
+          jq '(.userStories[0]).title = "MUTATED TITLE"' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+          mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
         fi
+        echo "Verification done."
         ;;
       multi-pass)
-        echo "Ralph verify phase: marking all..."
         if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
           jq '(.userStories[] | select(.passes != true)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
           mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
         fi
+        echo "All stories passed."
         ;;
       revert)
-        echo "Ralph verify phase: reverting..."
         if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-          FIRST_PASSED=$(jq -r '[.userStories[] | select(.passes == true)] | .[0].id // empty' "$MOCK_PRD_FILE")
-          if [ -n "$FIRST_PASSED" ]; then
-            jq --arg id "$FIRST_PASSED" '(.userStories[] | select(.id == $id)).passes = false' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-          fi
+          jq '(.userStories[] | select(.passes == true)).passes = false' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+          mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
         fi
+        echo "Reverted stories."
         ;;
       corrupt)
-        echo "Ralph verify phase: corrupting..."
-        if [ -n "$MOCK_PRD_FILE" ]; then
-          echo "not valid json {{{" > "$MOCK_PRD_FILE"
-        fi
-        ;;
-      promise)
-        echo "Ralph verify phase: outputting promise tag."
-        echo "<promise>COMPLETE</promise>"
-        ;;
-      hang)
-        echo "Ralph: starting long task..."
-        sleep 3600
-        ;;
-      crash)
-        echo "Ralph: fatal error!" >&2
-        exit 1
-        ;;
-      serena_init_match)
-        ACTUAL_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/unknown")"
-        echo "[SERENA_INIT: $ACTUAL_ROOT]"
-        echo "Ralph verify phase: checking acceptance criteria..."
         if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-          if [ -n "$NEXT_ID" ]; then
-            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-            echo "Verified $NEXT_ID: all criteria passed."
-          fi
+          echo "NOT VALID JSON!!!" > "$MOCK_PRD_FILE"
         fi
-        ;;
-      serena_init_mismatch)
-        echo "[SERENA_INIT: /wrong/path]"
-        echo "Ralph verify phase: checking acceptance criteria..."
-        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
-          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
-          if [ -n "$NEXT_ID" ]; then
-            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
-            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
-            echo "Verified $NEXT_ID: all criteria passed."
-          fi
-        fi
+        echo "Corrupted."
         ;;
       *)
-        echo "Unknown mock behavior: $BEHAVIOR"
-        exit 1
+        echo "Verification failed: criteria not met."
         ;;
     esac
     ;;
+
   *)
-    # Fallback for tests that don't use phases (e.g., old-style invocations)
-    echo "Mock claude called without recognized phase."
+    echo "Unknown phase"
     ;;
 esac

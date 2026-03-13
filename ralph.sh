@@ -352,7 +352,7 @@ run_read_phase() {
   echo "$prompt" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
-    --model claude-sonnet-4-6 \
+    --model claude-haiku-4-5-20251001 \
     --allowed-tools "Read $SERENA_READ_TOOLS" \
     $serena_args \
     2>&1
@@ -390,7 +390,7 @@ run_verify_phase() {
   echo "$prompt" | timeout "$TIMEOUT" claude \
     --print \
     --dangerously-skip-permissions \
-    --model claude-sonnet-4-6 \
+    --model claude-haiku-4-5-20251001 \
     --allowed-tools "Bash Read Edit Write $SERENA_READ_TOOLS" \
     $serena_args \
     2>&1
