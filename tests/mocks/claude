@@ -60,6 +60,16 @@ fi
 case "$PHASE" in
   read)
     # Output context to stdout (ralph.sh captures this as context.md)
+    # Compute actual project root the same way ralph.sh does
+    ACTUAL_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/unknown")"
+    case "$BEHAVIOR" in
+      serena_init_match)
+        echo "[SERENA_INIT: $ACTUAL_ROOT]"
+        ;;
+      serena_init_mismatch)
+        echo "[SERENA_INIT: /wrong/path]"
+        ;;
+    esac
     echo "### Relevant Files"
     echo "- src/main.ts: Main entry point"
     echo ""
@@ -137,6 +147,31 @@ case "$PHASE" in
       crash)
         echo "Ralph: fatal error!" >&2
         exit 1
+        ;;
+      serena_init_match)
+        ACTUAL_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "/unknown")"
+        echo "[SERENA_INIT: $ACTUAL_ROOT]"
+        echo "Ralph verify phase: checking acceptance criteria..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+          if [ -n "$NEXT_ID" ]; then
+            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+            echo "Verified $NEXT_ID: all criteria passed."
+          fi
+        fi
+        ;;
+      serena_init_mismatch)
+        echo "[SERENA_INIT: /wrong/path]"
+        echo "Ralph verify phase: checking acceptance criteria..."
+        if [ -n "$MOCK_PRD_FILE" ] && [ -f "$MOCK_PRD_FILE" ]; then
+          NEXT_ID=$(jq -r '[.userStories[] | select(.passes != true)] | sort_by(.priority) | .[0].id // empty' "$MOCK_PRD_FILE")
+          if [ -n "$NEXT_ID" ]; then
+            jq --arg id "$NEXT_ID" '(.userStories[] | select(.id == $id)).passes = true' "$MOCK_PRD_FILE" > "$MOCK_PRD_FILE.tmp"
+            mv "$MOCK_PRD_FILE.tmp" "$MOCK_PRD_FILE"
+            echo "Verified $NEXT_ID: all criteria passed."
+          fi
+        fi
         ;;
       *)
         echo "Unknown mock behavior: $BEHAVIOR"

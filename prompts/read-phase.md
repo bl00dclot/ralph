@@ -1,5 +1,12 @@
 # Read Phase: Codebase Survey
 
+## Step 0: Initialize Serena
+Before anything else:
+1. Call `activate_project` to initialize Serena on this project
+2. Call `get_current_config` to confirm the active project root
+3. Output exactly this line (no extra whitespace):
+   [SERENA_INIT: <project_root_value_from_get_current_config>]
+
 You are performing a READ-ONLY survey of the codebase to gather context for implementing a user story.
 Output a structured analysis to stdout. Do NOT modify any files.
 

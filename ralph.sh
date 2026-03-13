@@ -213,6 +213,24 @@ build_serena_config() {
   fi
 }
 
+check_serena_init() {
+  local phase_name="$1"
+  local log_file="$2"
+  local match
+  match=$(grep -oE '\[SERENA_INIT: [^]]+\]' "$log_file" | head -1)
+  if [ -n "$match" ]; then
+    local reported_root="${match#\[SERENA_INIT: }"
+    reported_root="${reported_root%\]}"
+    if [ "$reported_root" = "$PROJECT_ROOT" ]; then
+      echo "  Serena: active on $reported_root ✓"
+    else
+      echo "  WARNING: Serena active on $reported_root (expected $PROJECT_ROOT)"
+    fi
+  else
+    echo "  WARNING: Serena initiation not confirmed in $phase_name phase"
+  fi
+}
+
 # --- Helper: build phase prompt with story data ---
 build_phase_prompt() {
   local template_file="$1"
@@ -320,7 +338,7 @@ run_phase_with_retry() {
 # --- Phase runners ---
 
 # Serena read-only tools (no write/edit Serena tools)
-SERENA_READ_TOOLS="mcp__plugin_serena_serena__get_symbols_overview mcp__plugin_serena_serena__find_symbol mcp__plugin_serena_serena__read_file mcp__plugin_serena_serena__list_dir mcp__plugin_serena_serena__search_for_pattern mcp__plugin_serena_serena__find_referencing_symbols mcp__plugin_serena_serena__find_file"
+SERENA_READ_TOOLS="mcp__plugin_serena_serena__activate_project mcp__plugin_serena_serena__get_current_config mcp__plugin_serena_serena__get_symbols_overview mcp__plugin_serena_serena__find_symbol mcp__plugin_serena_serena__read_file mcp__plugin_serena_serena__list_dir mcp__plugin_serena_serena__search_for_pattern mcp__plugin_serena_serena__find_referencing_symbols mcp__plugin_serena_serena__find_file"
 
 run_read_phase() {
   local prompt
@@ -603,6 +621,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   READ_LOG="$LOG_DIR/iteration-$i-read.log"
   rm -f "$CONTEXT_FILE"
   run_phase_with_retry "read" "$READ_LOG" "$CONTEXT_FILE"
+  [ "$SERENA_AVAILABLE" = "true" ] && check_serena_init "read" "$READ_LOG"
 
   # Verify context was produced
   if [ ! -s "$CONTEXT_FILE" ]; then
@@ -623,6 +642,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo "  --- Phase 3: VERIFY ($CURRENT_STORY_ID) ---"
   VERIFY_LOG="$LOG_DIR/iteration-$i-verify.log"
   run_phase_with_retry "verify" "$VERIFY_LOG"
+  [ "$SERENA_AVAILABLE" = "true" ] && check_serena_init "verify" "$VERIFY_LOG"
 
   # --- Contract guard ---
   if ! check_contract; then
