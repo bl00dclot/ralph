@@ -1,5 +1,12 @@
 # Verify Phase: Acceptance Criteria Check
 
+## Step 0: Initialize Serena
+Before anything else:
+1. Call `activate_project` to initialize Serena on this project
+2. Call `get_current_config` to confirm the active project root
+3. Output exactly this line (no extra whitespace):
+   [SERENA_INIT: <project_root_value_from_get_current_config>]
+
 Verify that the user story's acceptance criteria are met by running checks and inspecting the code.
 
 ## Current Story
@@ -41,6 +48,12 @@ For each acceptance criterion, run the appropriate verification:
    - Suggestions: [what the next iteration should fix]
    ---
    ```
+3. End your output with a scannable section:
+   ```
+   ### Files Needing Fixes
+   - path/to/file.ts:LINE — Description of what needs fixing
+   ```
+   This helps the next write phase find and fix remaining issues quickly.
 
 ## File Paths
 

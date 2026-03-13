@@ -14,6 +14,17 @@ Implement the user story below. Pre-digested context is provided; you also have 
 
 {{VERIFY_FEEDBACK}}
 
+### How to use verify feedback
+
+If the section above contains feedback (not empty), a previous iteration attempted
+this story and failed verification. You MUST:
+
+1. Read the feedback carefully — it contains specific error messages and fix suggestions
+2. If feedback mentions files not in your pre-digested context, use Read to examine those files, then fix them
+3. Do NOT declare the story complete while verify feedback lists unresolved issues
+4. Address ALL failures listed, including in files outside the original context
+5. Treat verify feedback as higher priority than pre-digested context — it reflects the actual current state
+
 ## Instructions
 
 1. Implement the acceptance criteria based on the context provided above
